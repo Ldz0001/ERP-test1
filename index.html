@@ -9,14 +9,27 @@
 :root{
   --bg:#0b1220;--panel:#0f172a;--muted:#0c152a;--text:#e5e7eb;--sub:#9ca3af;
   --accent:#22d3ee;--violet:#a78bfa;--ok:#22c55e;--warn:#f59e0b;--bad:#ef4444;
-  --chip:#1f2937;--row:#0a1222;--border:#1e293b;--shadow:0 6px 24px rgba(0,0,0,.25)
+  --chip:#1f2937;--row:#0a1222;--border:#1e293b;--shadow:0 6px 24px rgba(0,0,0,.25);
+  --surface-strong:#0b152a;--surface-soft:#0b1426;--input-bg:#081120;
+  --top-bg:linear-gradient(180deg,#0f172a,#0c1426);--btn-bg:linear-gradient(180deg,#1f2937,#0f172a);
+  --btn-border:#1e293b;--btn-text:var(--text);--btn-pri-bg:linear-gradient(180deg,#0ea5e9,#0284c7);
+  --btn-pri-border:#0369a1;--row-hover:#0d1b31;
+}
+[data-theme="light"]{
+  --bg:#f8fafc;--panel:#ffffff;--muted:#f1f5f9;--text:#0f172a;--sub:#475569;
+  --accent:#0284c7;--violet:#6366f1;--ok:#15803d;--warn:#b45309;--bad:#b91c1c;
+  --chip:#e2e8f0;--row:#f8fafc;--border:#cbd5f5;--shadow:0 6px 20px rgba(15,23,42,.12);
+  --surface-strong:#e2e8f0;--surface-soft:#f8fafc;--input-bg:#ffffff;
+  --top-bg:linear-gradient(180deg,#e2e8f0,#f8fafc);--btn-bg:linear-gradient(180deg,#e2e8f0,#cbd5f5);
+  --btn-border:#cbd5f5;--btn-text:#0f172a;--btn-pri-bg:linear-gradient(180deg,#38bdf8,#0ea5e9);
+  --btn-pri-border:#0284c7;--row-hover:#e2e8f0;
 }
 *{box-sizing:border-box}
 html,body{margin:0;background:var(--bg);color:var(--text);font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Apple Color Emoji","Segoe UI Emoji"}
 a{color:var(--accent);text-decoration:none}
 a:hover{text-decoration:underline}
 .app{min-height:100vh;display:flex;flex-direction:column}
-.top{position:sticky;top:0;z-index:50;display:flex;gap:.8rem;align-items:center;padding:.8rem 1rem;background:linear-gradient(180deg,#0f172a,#0c1426);border-bottom:1px solid var(--border);box-shadow:var(--shadow)}
+.top{position:sticky;top:0;z-index:50;display:flex;gap:.8rem;align-items:center;padding:.8rem 1rem;background:var(--top-bg);border-bottom:1px solid var(--border);box-shadow:var(--shadow)}
 .logo{width:36px;height:36px;border-radius:10px;background:radial-gradient(12px 12px at 30% 30%,var(--accent),transparent 70%),radial-gradient(12px 12px at 70% 70%,var(--violet),transparent 70%),#081120}
 .title{font-weight:800}
 .tiny{color:var(--sub);font-size:.82rem}
@@ -30,22 +43,23 @@ a:hover{text-decoration:underline}
 .panel{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:1rem;box-shadow:var(--shadow)}
 .grid{display:grid;gap:1rem}
 .g12{grid-template-columns:repeat(12,1fr)}
-.kpi{grid-column:span 3;background:#0b152a;border:1px solid var(--border);border-radius:14px;padding:1rem}
+.kpi{grid-column:span 3;background:var(--surface-strong);border:1px solid var(--border);border-radius:14px;padding:1rem}
 .kpi .lbl{color:var(--sub);font-size:.9rem}
 .kpi .val{font-size:1.4rem;font-weight:800;margin-top:.25rem}
 .kpi .delta{font-size:.9rem;margin-top:.25rem}
 .ok{color:#86efac}.warn{color:#fde68a}.bad{color:#fecaca}
 .bar{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;margin:.5rem 0 1rem}
-.grp{display:flex;gap:.5rem;align-items:center;background:#0b1426;border:1px solid var(--border);padding:.5rem;border-radius:10px}
-.bar input,.bar select,.bar textarea{background:#081120;color:var(--text);border:1px solid var(--border);padding:.5rem .6rem;border-radius:8px}
-.btn{background:linear-gradient(180deg,#1f2937,#0f172a);color:var(--text);border:1px solid var(--border);padding:.55rem .8rem;border-radius:8px;cursor:pointer}
-.btn.pri{background:linear-gradient(180deg,#0ea5e9,#0284c7);border-color:#0369a1}
+.grp{display:flex;gap:.5rem;align-items:center;background:var(--surface-soft);border:1px solid var(--border);padding:.5rem;border-radius:10px}
+.bar input,.bar select,.bar textarea{background:var(--input-bg);color:var(--text);border:1px solid var(--border);padding:.5rem .6rem;border-radius:8px}
+.btn{background:var(--btn-bg);color:var(--btn-text);border:1px solid var(--btn-border);padding:.55rem .8rem;border-radius:8px;cursor:pointer}
+.btn.pri{background:var(--btn-pri-bg);border-color:var(--btn-pri-border);color:#fff}
+.theme-toggle{font-size:.85rem;display:flex;align-items:center;gap:.35rem;padding:.45rem .75rem}
 .wrap{overflow:auto;border:1px solid var(--border);border-radius:12px}
 table{width:100%;border-collapse:collapse}
 th,td{text-align:left;padding:.6rem .55rem;border-bottom:1px solid var(--border);vertical-align:top}
 thead th{position:sticky;top:0;background:var(--panel);border-bottom:1px solid var(--border);cursor:pointer}
 tbody tr:nth-child(odd){background:var(--row)}
-tbody tr:hover{background:#0d1b31}
+tbody tr:hover{background:var(--row-hover)}
 .status{padding:.15rem .5rem;border-radius:8px;font-size:.75rem;border:1px solid var(--border);background:var(--chip);display:inline-block}
 .status.ok{background:rgba(34,197,94,.12);color:#86efac;border-color:rgba(34,197,94,.25)}
 .status.warn{background:rgba(245,158,11,.12);color:#facc15;border-color:rgba(245,158,11,.25)}
@@ -60,7 +74,7 @@ tbody tr:hover{background:#0d1b31}
 .card{width:min(760px,95vw);background:var(--panel);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow);padding:1rem}
 .form{display:grid;grid-template-columns:1fr 1fr;gap:.6rem}
 .form label{font-size:.85rem;color:var(--sub)}
-.form input,.form select,.form textarea{width:100%;background:#081120;color:var(--text);border:1px solid var(--border);border-radius:8px;padding:.5rem}
+.form input,.form select,.form textarea{width:100%;background:var(--input-bg);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:.5rem}
 .actions{display:flex;gap:.5rem;justify-content:flex-end;margin-top:.8rem}
 .footer{padding:1rem;color:var(--sub);text-align:center;border-top:1px solid var(--border)}
 @media (max-width:1024px){.main{grid-template-columns:1fr}.side{position:static;height:auto;border-right:none}.kpi{grid-column:span 6}}
@@ -76,6 +90,7 @@ tbody tr:hover{background:#0d1b31}
       <div class="tiny">Invoices · Accounting Books · Bank · Audit</div>
     </div>
     <span class="sp"></span>
+    <button id="themeToggle" class="btn theme-toggle" type="button" aria-label="Switch to light mode">☀️ Light</button>
     <span id="env" class="chip">LocalStorage</span>
   </header>
 
@@ -329,6 +344,7 @@ const deb=(fn,ms=160)=>{let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>fn
 
 /* ===== State ===== */
 const LS_KEYS = {sales:"erp_sales",purch:"erp_purch",bank:"erp_bank"};
+const THEME_KEY = "erp_theme";
 const State = {
   sales:[], purch:[], bank:[],
   sel:{sales:null,purch:null,bank:null},
@@ -703,6 +719,25 @@ function exportReportCSV(){
   csvDownload(`report_${$("#rType").value}_${today()}.csv`,[{label:"field",get:r=>r.field},{label:"value",get:r=>r.value}],rows);
 }
 
+function applyTheme(theme){
+  const next=theme==="light"?"light":"dark";
+  document.documentElement.setAttribute("data-theme", next);
+  const btn=$("#themeToggle");
+  if(btn){
+    btn.textContent = next==="light"?"🌙 Dark":"☀️ Light";
+    btn.setAttribute("aria-label", next==="light"?"Switch to dark mode":"Switch to light mode");
+  }
+  return next;
+}
+function loadTheme(){
+  applyTheme(localStorage.getItem(THEME_KEY)||"dark");
+}
+function toggleTheme(){
+  const current=document.documentElement.getAttribute("data-theme")==="light"?"light":"dark";
+  const next=current==="light"?"dark":"light";
+  localStorage.setItem(THEME_KEY, applyTheme(next));
+}
+
 /* ===== Events ===== */
 $("#nav").addEventListener("click",e=>{ if(e.target.tagName!=="BUTTON")return; setActive(e.target.dataset.tab); if(e.target.dataset.tab==="bank") autoRecon(); });
 ["sQ","sFrom","sTo"].forEach(id=>$("#"+id).addEventListener("input", deb(()=>{ State.filter.sales.q=$("#sQ").value.toLowerCase(); State.filter.sales.from=$("#sFrom").value; State.filter.sales.to=$("#sTo").value; render.sales(); })));
@@ -739,7 +774,7 @@ $("#bEdit").onclick=()=> State.sel.bank? openModal("bank","edit", State.sel.bank
 $("#bDel").onclick=()=>{ const sel=State.sel.bank; if(!sel) return alert("Select a row"); if(confirm("Delete selected?")){ State.bank=State.bank.filter(x=>x!==sel); State.sel.bank=null; render.bank(); $("#env").textContent="Edited (unsaved)"; }};
 $("#bCSV").onclick=()=>{ const rows=filtered.bank(); const hdr=[{label:"date",get:r=>r.date},{label:"description",get:r=>r.description},{label:"amount",get:r=>num(r.amount)},{label:"type",get:r=>r.type},{label:"invoice_no",get:r=>r.invoice_no},{label:"match_status",get:r=>r.match_status}]; csvDownload(`bank_${today()}.csv`,hdr,rows); };
 $("#bPDF").onclick=()=> printTableAsPDF("Bank", $("#bTbl"));
-$("#bRecon").onclick=autoRecon);
+$("#bRecon").onclick=autoRecon;
 
 // reports
 $("#rRun").onclick=runReport;
@@ -755,8 +790,12 @@ $("#dSave").onclick=saveLS; $("#dLoad").onclick=loadLS; $("#dClear").onclick=()=
 $("#dExport").onclick=exportJSON;
 $("#fImp").onchange=e=>{ const f=e.target.files?.[0]; if(f) importJSONFile(f); };
 
+// theme
+$("#themeToggle").onclick=toggleTheme;
+
 /* ===== Init ===== */
 function init(){
+  loadTheme();
   // Default from LocalStorage or seed
   loadLS();
   // Prefill date filters to month
