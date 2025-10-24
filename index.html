@@ -11,6 +11,11 @@
   --accent:#22d3ee;--violet:#a78bfa;--ok:#22c55e;--warn:#f59e0b;--bad:#ef4444;
   --chip:#1f2937;--row:#0a1222;--border:#1e293b;--shadow:0 6px 24px rgba(0,0,0,.25)
 }
+body.light{
+  --bg:#f8fafc;--panel:#ffffff;--muted:#e2e8f0;--text:#0f172a;--sub:#475569;
+  --accent:#0284c7;--violet:#6366f1;--ok:#16a34a;--warn:#d97706;--bad:#dc2626;
+  --chip:#e2e8f0;--row:#f1f5f9;--border:#cbd5f5;--shadow:0 6px 24px rgba(15,23,42,.08)
+}
 *{box-sizing:border-box}
 html,body{margin:0;background:var(--bg);color:var(--text);font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Apple Color Emoji","Segoe UI Emoji"}
 a{color:var(--accent);text-decoration:none}
@@ -65,6 +70,16 @@ tbody tr:hover{background:#0d1b31}
 .footer{padding:1rem;color:var(--sub);text-align:center;border-top:1px solid var(--border)}
 @media (max-width:1024px){.main{grid-template-columns:1fr}.side{position:static;height:auto;border-right:none}.kpi{grid-column:span 6}}
 @media (max-width:640px){.kpi{grid-column:span 12}.form{grid-template-columns:1fr}}
+body.light .top{background:linear-gradient(180deg,#e2e8f0,#f8fafc)}
+body.light .logo{background:radial-gradient(12px 12px at 30% 30%,var(--accent),transparent 70%),radial-gradient(12px 12px at 70% 70%,var(--violet),transparent 70%),#e0f2fe}
+body.light .chip{background:var(--chip);color:var(--sub)}
+body.light .kpi{background:#f1f5f9}
+body.light .grp{background:#e2e8f0}
+body.light .bar input,body.light .bar select,body.light .bar textarea{background:#ffffff;color:var(--text);border:1px solid var(--border)}
+body.light .btn{background:linear-gradient(180deg,#f8fafc,#e2e8f0);color:#0f172a;border-color:#cbd5f5}
+body.light .btn.pri{background:linear-gradient(180deg,#38bdf8,#0284c7);color:#f8fafc;border-color:#0369a1}
+body.light tbody tr:nth-child(odd){background:#f1f5f9}
+body.light tbody tr:hover{background:#e2e8f0}
 </style>
 </head>
 <body>
@@ -76,6 +91,7 @@ tbody tr:hover{background:#0d1b31}
       <div class="tiny">Invoices · Accounting Books · Bank · Audit</div>
     </div>
     <span class="sp"></span>
+    <button id="themeToggle" class="btn" type="button">☀️ Light Mode</button>
     <span id="env" class="chip">LocalStorage</span>
   </header>
 
@@ -320,6 +336,7 @@ tbody tr:hover{background:#0d1b31}
 /* ===== Utilities ===== */
 const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
 const fmt = new Intl.NumberFormat(undefined,{style:"currency",currency:"EUR"});
+const THEME_KEY = "erp_theme";
 const num = v => (typeof v==="number"?v:(v?Number(String(v).replace(/[^0-9.-]/g,"")):0));
 const iso = d => (d?new Date(d).toISOString().slice(0,10):"");
 const today = ()=>iso(new Date());
@@ -423,6 +440,20 @@ function csvDownload(name, headers, rows){
   const head = headers.map(h=>csvCell(h.label)).join(",")+"\n";
   const body = rows.map(r=> headers.map(h=>csvCell(h.get(r))).join(",")).join("\n");
   download(name, head+body, "text/csv");
+}
+function applyTheme(theme){
+  const isLight = theme === "light";
+  document.body.classList.toggle("light", isLight);
+  const btn=$("#themeToggle"); if(btn) btn.textContent = isLight?"🌙 Dark Mode":"☀️ Light Mode";
+}
+function loadTheme(){
+  const theme = localStorage.getItem(THEME_KEY) || "dark";
+  applyTheme(theme);
+}
+function toggleTheme(){
+  const next = document.body.classList.contains("light")?"dark":"light";
+  localStorage.setItem(THEME_KEY, next);
+  applyTheme(next);
 }
 function download(name,content,mime){
   const a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([content],{type:mime})); a.download=name; a.click(); URL.revokeObjectURL(a.href);
@@ -704,7 +735,14 @@ function exportReportCSV(){
 }
 
 /* ===== Events ===== */
-$("#nav").addEventListener("click",e=>{ if(e.target.tagName!=="BUTTON")return; setActive(e.target.dataset.tab); if(e.target.dataset.tab==="bank") autoRecon(); });
+$("#nav").addEventListener("click",e=>{
+  if(!(e.target instanceof Element)) return;
+  const btn = e.target.closest("button");
+  if(!btn || !btn.dataset.tab) return;
+  setActive(btn.dataset.tab);
+  if(btn.dataset.tab==="bank") autoRecon();
+});
+$("#themeToggle").addEventListener("click", toggleTheme);
 ["sQ","sFrom","sTo"].forEach(id=>$("#"+id).addEventListener("input", deb(()=>{ State.filter.sales.q=$("#sQ").value.toLowerCase(); State.filter.sales.from=$("#sFrom").value; State.filter.sales.to=$("#sTo").value; render.sales(); })));
 $("#sSt").onchange=()=>{ State.filter.sales.st=$("#sSt").value; render.sales(); };
 ["pQ","pFrom","pTo"].forEach(id=>$("#"+id).addEventListener("input", deb(()=>{ State.filter.purch.q=$("#pQ").value.toLowerCase(); State.filter.purch.from=$("#pFrom").value; State.filter.purch.to=$("#pTo").value; render.purch(); })));
@@ -757,6 +795,7 @@ $("#fImp").onchange=e=>{ const f=e.target.files?.[0]; if(f) importJSONFile(f); }
 
 /* ===== Init ===== */
 function init(){
+  loadTheme();
   // Default from LocalStorage or seed
   loadLS();
   // Prefill date filters to month
