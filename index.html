@@ -9,14 +9,27 @@
 :root{
   --bg:#0b1220;--panel:#0f172a;--muted:#0c152a;--text:#e5e7eb;--sub:#9ca3af;
   --accent:#22d3ee;--violet:#a78bfa;--ok:#22c55e;--warn:#f59e0b;--bad:#ef4444;
-  --chip:#1f2937;--row:#0a1222;--border:#1e293b;--shadow:0 6px 24px rgba(0,0,0,.25)
+  --chip:#1f2937;--row:#0a1222;--border:#1e293b;--shadow:0 6px 24px rgba(0,0,0,.25);
+  --surface-strong:#0b152a;--surface-soft:#0b1426;--input-bg:#081120;
+  --top-bg:linear-gradient(180deg,#0f172a,#0c1426);--btn-bg:linear-gradient(180deg,#1f2937,#0f172a);
+  --btn-border:#1e293b;--btn-text:var(--text);--btn-pri-bg:linear-gradient(180deg,#0ea5e9,#0284c7);
+  --btn-pri-border:#0369a1;--row-hover:#0d1b31;
+}
+[data-theme="light"]{
+  --bg:#f8fafc;--panel:#ffffff;--muted:#f1f5f9;--text:#0f172a;--sub:#475569;
+  --accent:#0284c7;--violet:#6366f1;--ok:#15803d;--warn:#b45309;--bad:#b91c1c;
+  --chip:#e2e8f0;--row:#f8fafc;--border:#cbd5f5;--shadow:0 6px 20px rgba(15,23,42,.12);
+  --surface-strong:#e2e8f0;--surface-soft:#f8fafc;--input-bg:#ffffff;
+  --top-bg:linear-gradient(180deg,#e2e8f0,#f8fafc);--btn-bg:linear-gradient(180deg,#e2e8f0,#cbd5f5);
+  --btn-border:#cbd5f5;--btn-text:#0f172a;--btn-pri-bg:linear-gradient(180deg,#38bdf8,#0ea5e9);
+  --btn-pri-border:#0284c7;--row-hover:#e2e8f0;
 }
 *{box-sizing:border-box}
 html,body{margin:0;background:var(--bg);color:var(--text);font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Apple Color Emoji","Segoe UI Emoji"}
 a{color:var(--accent);text-decoration:none}
 a:hover{text-decoration:underline}
 .app{min-height:100vh;display:flex;flex-direction:column}
-.top{position:sticky;top:0;z-index:50;display:flex;gap:.8rem;align-items:center;padding:.8rem 1rem;background:linear-gradient(180deg,#0f172a,#0c1426);border-bottom:1px solid var(--border);box-shadow:var(--shadow)}
+.top{position:sticky;top:0;z-index:50;display:flex;gap:.8rem;align-items:center;padding:.8rem 1rem;background:var(--top-bg);border-bottom:1px solid var(--border);box-shadow:var(--shadow)}
 .logo{width:36px;height:36px;border-radius:10px;background:radial-gradient(12px 12px at 30% 30%,var(--accent),transparent 70%),radial-gradient(12px 12px at 70% 70%,var(--violet),transparent 70%),#081120}
 .title{font-weight:800}
 .tiny{color:var(--sub);font-size:.82rem}
@@ -30,22 +43,23 @@ a:hover{text-decoration:underline}
 .panel{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:1rem;box-shadow:var(--shadow)}
 .grid{display:grid;gap:1rem}
 .g12{grid-template-columns:repeat(12,1fr)}
-.kpi{grid-column:span 3;background:#0b152a;border:1px solid var(--border);border-radius:14px;padding:1rem}
+.kpi{grid-column:span 3;background:var(--surface-strong);border:1px solid var(--border);border-radius:14px;padding:1rem}
 .kpi .lbl{color:var(--sub);font-size:.9rem}
 .kpi .val{font-size:1.4rem;font-weight:800;margin-top:.25rem}
 .kpi .delta{font-size:.9rem;margin-top:.25rem}
 .ok{color:#86efac}.warn{color:#fde68a}.bad{color:#fecaca}
 .bar{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;margin:.5rem 0 1rem}
-.grp{display:flex;gap:.5rem;align-items:center;background:#0b1426;border:1px solid var(--border);padding:.5rem;border-radius:10px}
-.bar input,.bar select,.bar textarea{background:#081120;color:var(--text);border:1px solid var(--border);padding:.5rem .6rem;border-radius:8px}
-.btn{background:linear-gradient(180deg,#1f2937,#0f172a);color:var(--text);border:1px solid var(--border);padding:.55rem .8rem;border-radius:8px;cursor:pointer}
-.btn.pri{background:linear-gradient(180deg,#0ea5e9,#0284c7);border-color:#0369a1}
+.grp{display:flex;gap:.5rem;align-items:center;background:var(--surface-soft);border:1px solid var(--border);padding:.5rem;border-radius:10px}
+.bar input,.bar select,.bar textarea{background:var(--input-bg);color:var(--text);border:1px solid var(--border);padding:.5rem .6rem;border-radius:8px}
+.btn{background:var(--btn-bg);color:var(--btn-text);border:1px solid var(--btn-border);padding:.55rem .8rem;border-radius:8px;cursor:pointer}
+.btn.pri{background:var(--btn-pri-bg);border-color:var(--btn-pri-border);color:#fff}
+.theme-toggle{font-size:.85rem;display:flex;align-items:center;gap:.35rem;padding:.45rem .75rem}
 .wrap{overflow:auto;border:1px solid var(--border);border-radius:12px}
 table{width:100%;border-collapse:collapse}
 th,td{text-align:left;padding:.6rem .55rem;border-bottom:1px solid var(--border);vertical-align:top}
 thead th{position:sticky;top:0;background:var(--panel);border-bottom:1px solid var(--border);cursor:pointer}
 tbody tr:nth-child(odd){background:var(--row)}
-tbody tr:hover{background:#0d1b31}
+tbody tr:hover{background:var(--row-hover)}
 .status{padding:.15rem .5rem;border-radius:8px;font-size:.75rem;border:1px solid var(--border);background:var(--chip);display:inline-block}
 .status.ok{background:rgba(34,197,94,.12);color:#86efac;border-color:rgba(34,197,94,.25)}
 .status.warn{background:rgba(245,158,11,.12);color:#facc15;border-color:rgba(245,158,11,.25)}
@@ -60,7 +74,7 @@ tbody tr:hover{background:#0d1b31}
 .card{width:min(760px,95vw);background:var(--panel);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow);padding:1rem}
 .form{display:grid;grid-template-columns:1fr 1fr;gap:.6rem}
 .form label{font-size:.85rem;color:var(--sub)}
-.form input,.form select,.form textarea{width:100%;background:#081120;color:var(--text);border:1px solid var(--border);border-radius:8px;padding:.5rem}
+.form input,.form select,.form textarea{width:100%;background:var(--input-bg);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:.5rem}
 .actions{display:flex;gap:.5rem;justify-content:flex-end;margin-top:.8rem}
 .footer{padding:1rem;color:var(--sub);text-align:center;border-top:1px solid var(--border)}
 @media (max-width:1024px){.main{grid-template-columns:1fr}.side{position:static;height:auto;border-right:none}.kpi{grid-column:span 6}}
@@ -76,6 +90,7 @@ tbody tr:hover{background:#0d1b31}
       <div class="tiny">Invoices · Accounting Books · Bank · Audit</div>
     </div>
     <span class="sp"></span>
+    <button id="themeToggle" class="btn theme-toggle" type="button" aria-label="Switch to light mode">☀️ Light</button>
     <span id="env" class="chip">LocalStorage</span>
   </header>
 
@@ -297,6 +312,17 @@ tbody tr:hover{background:#0d1b31}
           <span class="tiny right">Tip: commit a <span class="mono">/data/*.json</span> set and load via Settings &ldquo;Load from LocalStorage&rdquo; after importing.</span>
         </div>
         <div class="succ">Local-first. Nothing leaves your browser.</div>
+        <div class="bar" style="margin-top:1rem">
+          <div class="grp"><div class="tiny">Import supplier invoices (.xlsx)</div><input type="file" id="supFile" accept=".xlsx,.xls,.csv"></div>
+          <div class="grp"><button class="btn pri" id="supTemplate">Download template</button><button class="btn" id="supClear">Clear imported</button></div>
+          <span class="tiny right">Imported rows: <span id="supCount">0</span></span>
+        </div>
+        <div class="wrap" style="margin-top:1rem">
+          <table id="supTbl">
+            <thead><tr id="supHead"></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
       </section>
     </main>
   </div>
@@ -326,11 +352,13 @@ const today = ()=>iso(new Date());
 const by=(k,dir=1)=>(a,b)=>a[k]===b[k]?0:(a[k]>b[k]?dir:-dir);
 const csvCell = s=>`"${String(s??"").replace(/"/g,'""')}"`;
 const deb=(fn,ms=160)=>{let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>fn(...a),ms);}};
+let xlsxPromise=null;
 
 /* ===== State ===== */
-const LS_KEYS = {sales:"erp_sales",purch:"erp_purch",bank:"erp_bank"};
+const LS_KEYS = {sales:"erp_sales",purch:"erp_purch",bank:"erp_bank",suppliers:"erp_suppliers"};
+const THEME_KEY = "erp_theme";
 const State = {
-  sales:[], purch:[], bank:[],
+  sales:[], purch:[], bank:[], suppliers:[],
   sel:{sales:null,purch:null,bank:null},
   sort:{sales:{k:"date",d:-1},purch:{k:"date",d:-1},bank:{k:"date",d:-1}},
   filter:{
@@ -357,7 +385,8 @@ const Seed = {
     {date:"2025-10-10",description:"ABC Corp partial INV-1003",amount:1150,type:"credit",invoice_no:"INV-1003",match_status:"partial"},
     {date:"2025-10-12",description:"OfficeMart BILL-7002",amount:-215.9,type:"debit",invoice_no:"BILL-7002",match_status:"unmatched"},
     {date:"2025-10-15",description:"Monthly hosting BILL-7001",amount:-400,type:"debit",invoice_no:"BILL-7001",match_status:"matched"}
-  ]
+  ],
+  suppliers:[]
 };
 
 /* ===== LocalStorage ===== */
@@ -365,23 +394,27 @@ function saveLS(){
   localStorage.setItem(LS_KEYS.sales, JSON.stringify(State.sales));
   localStorage.setItem(LS_KEYS.purch, JSON.stringify(State.purch));
   localStorage.setItem(LS_KEYS.bank, JSON.stringify(State.bank));
+  localStorage.setItem(LS_KEYS.suppliers, JSON.stringify(State.suppliers));
   $("#env").textContent="LocalStorage (saved)";
 }
 function loadLS(){
   State.sales = JSON.parse(localStorage.getItem(LS_KEYS.sales) || "[]");
   State.purch = JSON.parse(localStorage.getItem(LS_KEYS.purch) || "[]");
   State.bank  = JSON.parse(localStorage.getItem(LS_KEYS.bank)  || "[]");
-  if(!(State.sales.length||State.purch.length||State.bank.length)){
+  State.suppliers = JSON.parse(localStorage.getItem(LS_KEYS.suppliers) || "[]");
+  if(!(State.sales.length||State.purch.length||State.bank.length||State.suppliers.length)){
     State.sales = Seed.sales.slice(); State.purch = Seed.purch.slice(); State.bank = Seed.bank.slice();
+    State.suppliers = Seed.suppliers.slice();
     $("#env").textContent="Seed data";
   } else $("#env").textContent="LocalStorage (loaded)";
+  syncPurchasesFromSuppliers(State.suppliers.length>0);
   renderAll(); stamp();
 }
-function clearLS(){ localStorage.removeItem(LS_KEYS.sales);localStorage.removeItem(LS_KEYS.purch);localStorage.removeItem(LS_KEYS.bank); $("#env").textContent="LocalStorage (cleared)";}
+function clearLS(){ localStorage.removeItem(LS_KEYS.sales);localStorage.removeItem(LS_KEYS.purch);localStorage.removeItem(LS_KEYS.bank);localStorage.removeItem(LS_KEYS.suppliers); $("#env").textContent="LocalStorage (cleared)";}
 
 /* ===== Import/Export JSON ===== */
 function exportJSON(){
-  const data = {sales:State.sales,purch:State.purch,bank:State.bank, exported_at:new Date().toISOString()};
+  const data = {sales:State.sales,purch:State.purch,bank:State.bank,suppliers:State.suppliers, exported_at:new Date().toISOString()};
   download("erp_bundle.json", JSON.stringify(data,null,2), "application/json");
 }
 function importJSONFile(file){
@@ -394,7 +427,9 @@ function importJSONFile(file){
         if(Array.isArray(j.sales)) State.sales=j.sales;
         if(Array.isArray(j.purch)) State.purch=j.purch;
         if(Array.isArray(j.bank))  State.bank=j.bank;
+        if(Array.isArray(j.suppliers)) State.suppliers=j.suppliers;
       }
+      syncPurchasesFromSuppliers(State.suppliers.length>0);
       renderAll(); stamp(); $("#env").textContent="Imported (unsaved)";
     }catch(e){ alert("Invalid JSON: "+e.message); }
   };
@@ -434,6 +469,234 @@ function printTableAsPDF(title, table){
     th,td{border:1px solid #ccc;padding:6px;text-align:left} thead{background:#eee}
   </style></head><body><h2>${title}</h2>${table.outerHTML}</body></html>`);
   w.document.close(); w.focus(); w.print();
+}
+
+function normalizeExcelDate(v){
+  if(v==null||v==="") return "";
+  if(v instanceof Date) return iso(v);
+  if(typeof v==="number" && window.XLSX?.SSF?.parse_date_code){
+    const d=XLSX.SSF.parse_date_code(v);
+    if(d){
+      const dt=new Date(Date.UTC(d.y,d.m-1,d.d));
+      return iso(dt);
+    }
+  }
+  const str=String(v).trim();
+  if(!str) return "";
+  const dt=new Date(str);
+  return isNaN(dt.getTime())?str:iso(dt);
+}
+
+function normalizeSupplierRow(row){
+  const obj={};
+  let hasData=false;
+  for(const col of SUPPLIER_COLUMNS){
+    const raw=row?.[col.header] ?? row?.[col.header.trim()] ?? row?.[col.header.replace(/\s+/g," ")] ?? "";
+    let val=raw;
+    if(col.type==="date"){
+      val=normalizeExcelDate(raw);
+    }else if(col.type==="currency"||col.type==="number"||col.type==="percent"){
+      const str=String(raw??"").trim();
+      if(str){
+        const n=num(str);
+        val=Number.isFinite(n)?n:str;
+      }else val="";
+    }else{
+      val=String(raw??"").trim();
+    }
+    if(val!=="" && val!=null) hasData=true;
+    obj[col.key]=val;
+  }
+  return hasData?obj:null;
+}
+
+const SUPPLIER_STATUS_MAP = {
+  "pagado":"paid",
+  "pagada":"paid",
+  "pago":"paid",
+  "abonado":"paid",
+  "abonada":"paid",
+  "liquidado":"paid",
+  "liquidada":"paid",
+  "pendiente":"unpaid",
+  "pendiente de pago":"unpaid",
+  "no pagado":"unpaid",
+  "no pagada":"unpaid",
+  "vencido":"unpaid",
+  "vencida":"unpaid",
+  "overdue":"unpaid",
+  "due":"unpaid",
+  "parcial":"partial",
+  "parcialmente pagado":"partial",
+  "parcialmente pagada":"partial",
+  "partial":"partial",
+  "partial paid":"partial",
+  "partial payment":"partial"
+};
+
+function normalizeSupplierStatus(rawStatus, paidDate){
+  const text=String(rawStatus||"").trim().toLowerCase();
+  if(text && SUPPLIER_STATUS_MAP[text]) return SUPPLIER_STATUS_MAP[text];
+  if(text.includes("parcial")||text.includes("partial")) return "partial";
+  if(text.includes("pend")||text.includes("venc")||text.includes("due")||text.includes("outstanding")) return "unpaid";
+  if(text.includes("pag")||text.includes("abon")||text.includes("liq")) return "paid";
+  if(paidDate) return "paid";
+  return "unpaid";
+}
+
+function supplierToPurchase(row){
+  const paidDate=row.fecha_pago||"";
+  const amountSource=row.importe_total!==""?row.importe_total:row.base_imponible;
+  const amount=num(amountSource||0);
+  return {
+    invoice_no: row.numero_factura || row.codigo_er || "",
+    date: row.fecha_factura || row.fecha_vencimiento || row.fecha_tope_pago || row.fecha_actual || "",
+    supplier: row.razon_social || row.sociedad || "",
+    amount: Number.isFinite(amount)?amount:0,
+    status: normalizeSupplierStatus(row.estado_pago, paidDate),
+    paid_date: paidDate || "",
+    pdf_link: ""
+  };
+}
+
+function syncPurchasesFromSuppliers(force=false){
+  if(State.suppliers.length){
+    State.purch = State.suppliers.map(supplierToPurchase);
+    State.sel.purch=null;
+  }else if(force){
+    State.purch=[];
+    State.sel.purch=null;
+  }
+}
+
+function supplierCellText(col,val){
+  if(val==null||val==="") return "";
+  if(col.type==="currency"){
+    const n=typeof val==="number"?val:num(val);
+    return Number.isFinite(n)?fmt.format(n):String(val);
+  }
+  if(col.type==="percent"){
+    const n=typeof val==="number"?val:num(val);
+    if(!Number.isFinite(n)) return String(val);
+    const pct=n>1?n:(n*100);
+    return `${pct.toFixed(2)}%`;
+  }
+  if(col.type==="number"){
+    const n=typeof val==="number"?val:num(val);
+    return Number.isFinite(n)?String(n):String(val);
+  }
+  return String(val);
+}
+
+function buildSupplierHeader(){
+  const head=$("#supHead");
+  if(head && !head.dataset.ready){
+    head.innerHTML=SUPPLIER_COLUMNS.map(col=>`<th>${col.header}</th>`).join("");
+    head.dataset.ready="1";
+  }
+}
+
+function renderSuppliersTable(){
+  buildSupplierHeader();
+  const tb=$("#supTbl tbody");
+  if(!tb) return;
+  if(!State.suppliers.length){
+    tb.innerHTML=`<tr><td colspan="${SUPPLIER_COLUMNS.length}" class="tiny">No supplier invoices imported yet.</td></tr>`;
+  }else{
+    tb.innerHTML=State.suppliers.map(row=>`<tr>${SUPPLIER_COLUMNS.map(col=>`<td${col.type!=="text"?" class=\"mono\"":""}>${supplierCellText(col,row[col.key])}</td>`).join("")}</tr>`).join("");
+  }
+  const cnt=$("#supCount"); if(cnt) cnt.textContent=State.suppliers.length;
+}
+
+function applySupplierRows(rows){
+  const normalized=rows.map(normalizeSupplierRow).filter(Boolean);
+  State.suppliers=normalized;
+  syncPurchasesFromSuppliers(true);
+  renderAll();
+  stamp();
+  $("#env").textContent="Supplier Excel imported (unsaved)";
+}
+
+function parseCSVLine(line){
+  const res=[]; let field=""; let inQuotes=false;
+  for(let i=0;i<line.length;i++){
+    const ch=line[i];
+    if(ch==='"'){
+      if(inQuotes && line[i+1]==='"'){ field+='"'; i++; }
+      else inQuotes=!inQuotes;
+    }else if(ch===',' && !inQuotes){ res.push(field); field=""; }
+    else field+=ch;
+  }
+  res.push(field);
+  return res.map(c=>c.trim());
+}
+
+function ensureXLSX(){
+  if(window.XLSX) return Promise.resolve(window.XLSX);
+  if(!xlsxPromise){
+    xlsxPromise=new Promise((resolve,reject)=>{
+      const script=document.createElement("script");
+      script.src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+      script.async=true;
+      script.onload=()=>{
+        if(window.XLSX) resolve(window.XLSX);
+        else{ xlsxPromise=null; reject(new Error("XLSX unavailable after load")); }
+      };
+      script.onerror=()=>{ xlsxPromise=null; reject(new Error("Failed to load XLSX library")); };
+      document.head.appendChild(script);
+    });
+  }
+  return xlsxPromise;
+}
+
+function importSupplierExcel(file){
+  const name=file.name.toLowerCase();
+  if(name.endsWith(".csv")){
+    const fr=new FileReader();
+    fr.onload=()=>{
+      const text=String(fr.result||"").replace(/^\uFEFF/,"");
+      const lines=text.split(/\r?\n/).filter((l,i,arr)=>!(i===arr.length-1 && l.trim()===""));
+      if(!lines.length) return applySupplierRows([]);
+      const headers=parseCSVLine(lines[0]);
+      const rows=[];
+      for(let i=1;i<lines.length;i++){
+        const line=lines[i];
+        if(!line.trim()) continue;
+        const cells=parseCSVLine(line);
+        const row={};
+        headers.forEach((h,idx)=>{ row[h]=cells[idx]??""; });
+        rows.push(row);
+      }
+      applySupplierRows(rows);
+    };
+    fr.readAsText(file);
+  }else{
+    ensureXLSX().then(()=>{
+      const fr=new FileReader();
+      fr.onload=()=>{
+        try{
+          const data=new Uint8Array(fr.result);
+          const wb=XLSX.read(data,{type:"array",cellDates:true});
+          const sheet=wb.Sheets[wb.SheetNames[0]];
+          if(!sheet){ alert("No sheets found in workbook"); return; }
+          const rows=XLSX.utils.sheet_to_json(sheet,{defval:"",raw:true,cellDates:true});
+          applySupplierRows(rows);
+        }catch(err){
+          console.error(err);
+          alert("Failed to parse Excel file: "+err.message);
+        }
+      };
+      fr.readAsArrayBuffer(file);
+    }).catch(err=>{
+      console.error(err);
+      alert("Unable to load Excel parser: "+err.message);
+    });
+  }
+}
+
+function downloadSupplierTemplate(){
+  const head=SUPPLIER_COLUMNS.map(col=>`"${col.header}"`).join(",");
+  download("supplier_invoices_template.csv", head+"\n", "text/csv");
 }
 
 /* ===== Filters ===== */
@@ -477,6 +740,46 @@ const FIELDS = {
     ["type","Type","select","credit,debit"],["invoice_no","Invoice #","text"],["match_status","Match","select","matched,unmatched,partial,unknown"]
   ]
 };
+
+const SUPPLIER_COLUMNS = [
+  {header:"Sociedad",key:"sociedad",type:"text"},
+  {header:"Periodo Contable",key:"periodo_contable",type:"text"},
+  {header:"Fecha factura",key:"fecha_factura",type:"date"},
+  {header:"Razón Social",key:"razon_social",type:"text"},
+  {header:"VAT Number",key:"vat_number",type:"text"},
+  {header:"C.P.",key:"cp",type:"text"},
+  {header:"Número factura",key:"numero_factura",type:"text"},
+  {header:"DC",key:"dc",type:"text"},
+  {header:"Base imponible",key:"base_imponible",type:"currency"},
+  {header:"Tipo general",key:"tipo_general",type:"text"},
+  {header:"Tipo secundario",key:"tipo_secundario",type:"text"},
+  {header:"Tipo secundario 2",key:"tipo_secundario_2",type:"text"},
+  {header:"Tipo secundario 3",key:"tipo_secundario_3",type:"text"},
+  {header:"Cuota sin IVA",key:"cuota_sin_iva",type:"currency"},
+  {header:"Tipo de Operación",key:"tipo_operacion",type:"text"},
+  {header:"Importe Retención",key:"importe_retencion",type:"currency"},
+  {header:"Porcentaje Retención",key:"porcentaje_retencion",type:"percent"},
+  {header:"Importe Total",key:"importe_total",type:"currency"},
+  {header:"OPEX/CAPEX",key:"opex_capex",type:"text"},
+  {header:"Departamento",key:"departamento",type:"text"},
+  {header:"Categoría",key:"categoria",type:"text"},
+  {header:"Código ER",key:"codigo_er",type:"text"},
+  {header:"Cuenta contable",key:"cuenta_contable",type:"text"},
+  {header:"Nombre de la Cuenta país",key:"nombre_cuenta_pais",type:"text"},
+  {header:"Cuenta consolidada",key:"cuenta_consolidada",type:"text"},
+  {header:"Nombre consolidado",key:"nombre_consolidado",type:"text"},
+  {header:"Concepto libre",key:"concepto_libre",type:"text"},
+  {header:"CUPS",key:"cups",type:"text"},
+  {header:"Autorización Pago",key:"autorizacion_pago",type:"text"},
+  {header:"Fecha Vencimiento",key:"fecha_vencimiento",type:"date"},
+  {header:"Fecha tope pago",key:"fecha_tope_pago",type:"date"},
+  {header:"Fecha actual",key:"fecha_actual",type:"date"},
+  {header:"Días de Margen",key:"dias_margen",type:"number"},
+  {header:"Estado del Pago",key:"estado_pago",type:"text"},
+  {header:"Forma de Pago",key:"forma_pago",type:"text"},
+  {header:"Fecha de Pago",key:"fecha_pago",type:"date"},
+  {header:"PMP",key:"pmp",type:"number"}
+];
 function openModal(type, mode, rec){
   modalCtx={type,mode,rec: Object.assign({},rec||{})};
   $("#mTitle").textContent= (mode==="add"?"Add ":"Edit ")+type;
@@ -511,7 +814,7 @@ $("#mSave").onclick=()=>{
 };
 
 /* ===== Rendering ===== */
-function renderAll(){ renderKPIs(); renderAging(); render.sales(); render.purch(); render.bank(); renderAudit(); }
+function renderAll(){ renderKPIs(); renderAging(); render.sales(); render.purch(); render.bank(); render.suppliers(); renderAudit(); }
 
 function renderKPIs(){
   const ym=new Date().toISOString().slice(0,7);
@@ -601,7 +904,8 @@ const render = {
     selectRow(tb,"bank");
     $("#bStats").textContent=`${rows.length} tx • ${fmt.format(rows.reduce((a,b)=>a+num(b.amount),0))}`;
     $("#bOpen").textContent=`Open: ${rows.filter(x=>x.match_status!=="matched").length}`;
-  }
+  },
+  suppliers: renderSuppliersTable
 };
 
 /* ===== Audit ===== */
@@ -703,6 +1007,25 @@ function exportReportCSV(){
   csvDownload(`report_${$("#rType").value}_${today()}.csv`,[{label:"field",get:r=>r.field},{label:"value",get:r=>r.value}],rows);
 }
 
+function applyTheme(theme){
+  const next=theme==="light"?"light":"dark";
+  document.documentElement.setAttribute("data-theme", next);
+  const btn=$("#themeToggle");
+  if(btn){
+    btn.textContent = next==="light"?"🌙 Dark":"☀️ Light";
+    btn.setAttribute("aria-label", next==="light"?"Switch to dark mode":"Switch to light mode");
+  }
+  return next;
+}
+function loadTheme(){
+  applyTheme(localStorage.getItem(THEME_KEY)||"dark");
+}
+function toggleTheme(){
+  const current=document.documentElement.getAttribute("data-theme")==="light"?"light":"dark";
+  const next=current==="light"?"dark":"light";
+  localStorage.setItem(THEME_KEY, applyTheme(next));
+}
+
 /* ===== Events ===== */
 $("#nav").addEventListener("click",e=>{ if(e.target.tagName!=="BUTTON")return; setActive(e.target.dataset.tab); if(e.target.dataset.tab==="bank") autoRecon(); });
 ["sQ","sFrom","sTo"].forEach(id=>$("#"+id).addEventListener("input", deb(()=>{ State.filter.sales.q=$("#sQ").value.toLowerCase(); State.filter.sales.from=$("#sFrom").value; State.filter.sales.to=$("#sTo").value; render.sales(); })));
@@ -739,7 +1062,7 @@ $("#bEdit").onclick=()=> State.sel.bank? openModal("bank","edit", State.sel.bank
 $("#bDel").onclick=()=>{ const sel=State.sel.bank; if(!sel) return alert("Select a row"); if(confirm("Delete selected?")){ State.bank=State.bank.filter(x=>x!==sel); State.sel.bank=null; render.bank(); $("#env").textContent="Edited (unsaved)"; }};
 $("#bCSV").onclick=()=>{ const rows=filtered.bank(); const hdr=[{label:"date",get:r=>r.date},{label:"description",get:r=>r.description},{label:"amount",get:r=>num(r.amount)},{label:"type",get:r=>r.type},{label:"invoice_no",get:r=>r.invoice_no},{label:"match_status",get:r=>r.match_status}]; csvDownload(`bank_${today()}.csv`,hdr,rows); };
 $("#bPDF").onclick=()=> printTableAsPDF("Bank", $("#bTbl"));
-$("#bRecon").onclick=autoRecon);
+$("#bRecon").onclick=autoRecon;
 
 // reports
 $("#rRun").onclick=runReport;
@@ -754,9 +1077,25 @@ $("#aPDF").onclick=()=> printTableAsPDF("Audit Issues", $("#aTbl"));
 $("#dSave").onclick=saveLS; $("#dLoad").onclick=loadLS; $("#dClear").onclick=()=>{ if(confirm("Clear LocalStorage data?")){ clearLS(); } };
 $("#dExport").onclick=exportJSON;
 $("#fImp").onchange=e=>{ const f=e.target.files?.[0]; if(f) importJSONFile(f); };
+$("#supFile").onchange=e=>{ const f=e.target.files?.[0]; if(f){ importSupplierExcel(f); e.target.value=""; } };
+$("#supTemplate").onclick=downloadSupplierTemplate;
+$("#supClear").onclick=()=>{
+  if(!State.suppliers.length) return;
+  if(confirm("Clear imported supplier invoices?")){
+    State.suppliers=[];
+    syncPurchasesFromSuppliers(true);
+    renderAll();
+    stamp();
+    $("#env").textContent="Supplier data cleared";
+  }
+};
+
+// theme
+$("#themeToggle").onclick=toggleTheme;
 
 /* ===== Init ===== */
 function init(){
+  loadTheme();
   // Default from LocalStorage or seed
   loadLS();
   // Prefill date filters to month
