@@ -1,0 +1,771 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Internal ERP — Invoices • Books • Bank • Audit</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Single-file ERP: LocalStorage JSON CRUD, import/export, reconciliation, reports (aging), CSV/PDF export, dashboard.">
+<style>
+:root{
+  --bg:#0b1220;--panel:#0f172a;--muted:#0c152a;--text:#e5e7eb;--sub:#9ca3af;
+  --accent:#22d3ee;--violet:#a78bfa;--ok:#22c55e;--warn:#f59e0b;--bad:#ef4444;
+  --chip:#1f2937;--row:#0a1222;--border:#1e293b;--shadow:0 6px 24px rgba(0,0,0,.25)
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text);font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Apple Color Emoji","Segoe UI Emoji"}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+.app{min-height:100vh;display:flex;flex-direction:column}
+.top{position:sticky;top:0;z-index:50;display:flex;gap:.8rem;align-items:center;padding:.8rem 1rem;background:linear-gradient(180deg,#0f172a,#0c1426);border-bottom:1px solid var(--border);box-shadow:var(--shadow)}
+.logo{width:36px;height:36px;border-radius:10px;background:radial-gradient(12px 12px at 30% 30%,var(--accent),transparent 70%),radial-gradient(12px 12px at 70% 70%,var(--violet),transparent 70%),#081120}
+.title{font-weight:800}
+.tiny{color:var(--sub);font-size:.82rem}
+.sp{flex:1}
+.chip{background:var(--chip);color:var(--sub);padding:.2rem .5rem;border:1px solid var(--border);border-radius:999px;font-size:.74rem}
+.main{display:grid;grid-template-columns:240px 1fr;gap:1rem;padding:1rem}
+.side{position:sticky;top:68px;height:calc(100vh - 84px);overflow:auto;border-right:1px solid var(--border)}
+.nav{display:flex;flex-direction:column}
+.nav button{appearance:none;text-align:left;background:none;border:none;color:var(--text);padding:.75rem 1rem;border-bottom:1px solid var(--border);cursor:pointer}
+.nav button:hover,.nav button.active{background:var(--muted)}
+.panel{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:1rem;box-shadow:var(--shadow)}
+.grid{display:grid;gap:1rem}
+.g12{grid-template-columns:repeat(12,1fr)}
+.kpi{grid-column:span 3;background:#0b152a;border:1px solid var(--border);border-radius:14px;padding:1rem}
+.kpi .lbl{color:var(--sub);font-size:.9rem}
+.kpi .val{font-size:1.4rem;font-weight:800;margin-top:.25rem}
+.kpi .delta{font-size:.9rem;margin-top:.25rem}
+.ok{color:#86efac}.warn{color:#fde68a}.bad{color:#fecaca}
+.bar{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;margin:.5rem 0 1rem}
+.grp{display:flex;gap:.5rem;align-items:center;background:#0b1426;border:1px solid var(--border);padding:.5rem;border-radius:10px}
+.bar input,.bar select,.bar textarea{background:#081120;color:var(--text);border:1px solid var(--border);padding:.5rem .6rem;border-radius:8px}
+.btn{background:linear-gradient(180deg,#1f2937,#0f172a);color:var(--text);border:1px solid var(--border);padding:.55rem .8rem;border-radius:8px;cursor:pointer}
+.btn.pri{background:linear-gradient(180deg,#0ea5e9,#0284c7);border-color:#0369a1}
+.wrap{overflow:auto;border:1px solid var(--border);border-radius:12px}
+table{width:100%;border-collapse:collapse}
+th,td{text-align:left;padding:.6rem .55rem;border-bottom:1px solid var(--border);vertical-align:top}
+thead th{position:sticky;top:0;background:var(--panel);border-bottom:1px solid var(--border);cursor:pointer}
+tbody tr:nth-child(odd){background:var(--row)}
+tbody tr:hover{background:#0d1b31}
+.status{padding:.15rem .5rem;border-radius:8px;font-size:.75rem;border:1px solid var(--border);background:var(--chip);display:inline-block}
+.status.ok{background:rgba(34,197,94,.12);color:#86efac;border-color:rgba(34,197,94,.25)}
+.status.warn{background:rgba(245,158,11,.12);color:#facc15;border-color:rgba(245,158,11,.25)}
+.status.bad{background:rgba(239,68,68,.12);color:#fb7185;border-color:rgba(239,68,68,.25)}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace}
+.right{margin-left:auto}.hidden{display:none!important}
+.note{color:#fde68a;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.25);padding:.35rem .5rem;border-radius:8px}
+.succ{color:#bbf7d0;background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.25);padding:.35rem .5rem;border-radius:8px}
+.dang{color:#fecaca;background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.25);padding:.35rem .5rem;border-radius:8px}
+.modal{position:fixed;inset:0;display:none;place-items:center;background:rgba(0,0,0,.55);z-index:100}
+.modal.open{display:grid}
+.card{width:min(760px,95vw);background:var(--panel);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow);padding:1rem}
+.form{display:grid;grid-template-columns:1fr 1fr;gap:.6rem}
+.form label{font-size:.85rem;color:var(--sub)}
+.form input,.form select,.form textarea{width:100%;background:#081120;color:var(--text);border:1px solid var(--border);border-radius:8px;padding:.5rem}
+.actions{display:flex;gap:.5rem;justify-content:flex-end;margin-top:.8rem}
+.footer{padding:1rem;color:var(--sub);text-align:center;border-top:1px solid var(--border)}
+@media (max-width:1024px){.main{grid-template-columns:1fr}.side{position:static;height:auto;border-right:none}.kpi{grid-column:span 6}}
+@media (max-width:640px){.kpi{grid-column:span 12}.form{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <div class="logo" aria-hidden="true"></div>
+    <div>
+      <div class="title">Internal ERP</div>
+      <div class="tiny">Invoices · Accounting Books · Bank · Audit</div>
+    </div>
+    <span class="sp"></span>
+    <span id="env" class="chip">LocalStorage</span>
+  </header>
+
+  <div class="main">
+    <aside class="side">
+      <nav class="nav" id="nav">
+        <button data-tab="dash" class="active">🏠 Dashboard</button>
+        <button data-tab="sales">🧾 Sales</button>
+        <button data-tab="purch">📥 Purchases</button>
+        <button data-tab="bank">🏦 Bank</button>
+        <button data-tab="reports">📊 Reports</button>
+        <button data-tab="audit">🔎 Audit</button>
+        <button data-tab="data">⚙️ Data</button>
+      </nav>
+    </aside>
+
+    <main>
+      <!-- DASHBOARD -->
+      <section id="dash" class="panel">
+        <div class="grid g12">
+          <div class="kpi"><div class="lbl">Sales (This Month)</div><div class="val" id="kpiSalesCnt">—</div><div class="delta ok" id="kpiSalesSum">€ —</div></div>
+          <div class="kpi"><div class="lbl">Unpaid Sales</div><div class="val" id="kpiUnpaidCnt">—</div><div class="delta warn" id="kpiUnpaidSum">€ —</div></div>
+          <div class="kpi"><div class="lbl">Purchases (This Month)</div><div class="val" id="kpiPurchCnt">—</div><div class="delta" id="kpiPurchSum">€ —</div></div>
+          <div class="kpi"><div class="lbl">Unreconciled Bank</div><div class="val" id="kpiBankOpen">—</div><div class="delta bad" id="kpiBankSum">€ —</div></div>
+        </div>
+        <div class="bar">
+          <span id="qcDup" class="chip">Duplicates: —</span>
+          <span id="qcGap" class="chip">Numbering gaps: —</span>
+          <span id="qcOrph" class="chip">Orphans (no bank): —</span>
+          <span class="right tiny">Last refresh: <span id="lastRef">—</span></span>
+        </div>
+        <div class="wrap">
+          <table id="aging">
+            <thead><tr><th>Customer</th><th class="mono">Current</th><th class="mono">1–30</th><th class="mono">31–60</th><th class="mono">61–90</th><th class="mono">90+</th><th class="mono">Total</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- SALES -->
+      <section id="sales" class="panel hidden">
+        <div class="bar">
+          <div class="grp">
+            <input id="sQ" placeholder="Search (invoice, customer, notes)…">
+            <input id="sFrom" type="date"><input id="sTo" type="date">
+            <select id="sSt"><option value="">Any</option><option>paid</option><option>unpaid</option><option>partial</option></select>
+          </div>
+          <div class="grp">
+            <button class="btn" id="sAdd">+ New</button>
+            <button class="btn" id="sEdit">Edit</button>
+            <button class="btn" id="sDel">Delete</button>
+          </div>
+          <div class="grp">
+            <button class="btn pri" id="sCSV">Export CSV</button>
+            <button class="btn" id="sPDF">Export PDF</button>
+            <button class="btn" id="sOpenPDF">Open PDF</button>
+          </div>
+          <span class="tiny">Click a row to select • Click headers to sort</span>
+        </div>
+        <div class="wrap">
+          <table id="sTbl">
+            <thead>
+              <tr>
+                <th data-k="invoice_no">Invoice #</th>
+                <th data-k="date">Date</th>
+                <th data-k="customer">Customer</th>
+                <th data-k="amount" class="mono">Amount</th>
+                <th data-k="status">Status</th>
+                <th data-k="paid_date">Paid Date</th>
+                <th data-k="pdf_link">PDF</th>
+                <th data-k="notes">Notes</th>
+              </tr>
+            </thead><tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- PURCHASES -->
+      <section id="purch" class="panel hidden">
+        <div class="bar">
+          <div class="grp">
+            <input id="pQ" placeholder="Search (invoice, supplier)…">
+            <input id="pFrom" type="date"><input id="pTo" type="date">
+            <select id="pSt"><option value="">Any</option><option>paid</option><option>unpaid</option><option>partial</option></select>
+          </div>
+          <div class="grp">
+            <button class="btn" id="pAdd">+ New</button>
+            <button class="btn" id="pEdit">Edit</button>
+            <button class="btn" id="pDel">Delete</button>
+          </div>
+          <div class="grp">
+            <button class="btn pri" id="pCSV">Export CSV</button>
+            <button class="btn" id="pPDF">Export PDF</button>
+            <button class="btn" id="pOpenPDF">Open PDF</button>
+          </div>
+          <span class="tiny">Supplier invoices</span>
+        </div>
+        <div class="wrap">
+          <table id="pTbl">
+            <thead>
+              <tr>
+                <th data-k="invoice_no">Invoice #</th>
+                <th data-k="date">Date</th>
+                <th data-k="supplier">Supplier</th>
+                <th data-k="amount" class="mono">Amount</th>
+                <th data-k="status">Status</th>
+                <th data-k="paid_date">Paid Date</th>
+                <th data-k="pdf_link">PDF</th>
+              </tr>
+            </thead><tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- BANK -->
+      <section id="bank" class="panel hidden">
+        <div class="bar">
+          <div class="grp">
+            <input id="bQ" placeholder="Search (desc, invoice)…">
+            <input id="bFrom" type="date"><input id="bTo" type="date">
+            <select id="bType"><option value="">Any</option><option>credit</option><option>debit</option></select>
+          </div>
+          <div class="grp">
+            <button class="btn" id="bAdd">+ New</button>
+            <button class="btn" id="bEdit">Edit</button>
+            <button class="btn" id="bDel">Delete</button>
+          </div>
+          <div class="grp">
+            <button class="btn pri" id="bRecon">Auto-Match</button>
+            <button class="btn" id="bCSV">Export CSV</button>
+            <button class="btn" id="bPDF">Export PDF</button>
+            <span id="bStats" class="chip">—</span>
+          </div>
+        </div>
+        <div class="grid" style="grid-template-columns:1fr 1fr;gap:1rem">
+          <div class="panel">
+            <div style="display:flex;align-items:center;gap:.5rem">
+              <div class="title" style="font-size:1rem">Bank Transactions</div>
+              <span id="bOpen" class="chip right">Open: —</span>
+            </div>
+            <div class="wrap">
+              <table id="bTbl">
+                <thead>
+                  <tr>
+                    <th data-k="date">Date</th>
+                    <th data-k="description">Description</th>
+                    <th data-k="amount" class="mono">Amount</th>
+                    <th data-k="type">Type</th>
+                    <th data-k="invoice_no">Invoice #</th>
+                    <th data-k="match_status">Match</th>
+                  </tr>
+                </thead><tbody></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="title" style="font-size:1rem">Suggested Matches</div>
+            <div class="tiny">Click to apply</div>
+            <div id="bSug" class="grid" style="grid-template-columns:1fr;gap:.6rem;margin-top:.5rem"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- REPORTS -->
+      <section id="reports" class="panel hidden">
+        <div class="bar">
+          <div class="grp">
+            <label class="tiny">Period</label>
+            <input id="rFrom" type="date"><input id="rTo" type="date">
+          </div>
+          <div class="grp">
+            <select id="rType">
+              <option value="sales">Sales Summary</option>
+              <option value="purch">Purchases Summary</option>
+              <option value="aging">Receivables Aging</option>
+              <option value="bank">Bank Summary</option>
+            </select>
+          </div>
+          <div class="grp">
+            <button class="btn pri" id="rRun">Run</button>
+            <button class="btn" id="rCSV">Export CSV</button>
+            <button class="btn" id="rPDF">Export PDF</button>
+          </div>
+          <span class="tiny">Reports run on in-memory data</span>
+        </div>
+        <div class="wrap">
+          <table id="rTbl"><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody></tbody></table>
+        </div>
+      </section>
+
+      <!-- AUDIT -->
+      <section id="audit" class="panel hidden">
+        <div class="grid g12">
+          <div class="kpi"><div class="lbl">Duplicate Invoices</div><div class="val" id="aDup">—</div><div class="tiny" id="aDupEx">—</div></div>
+          <div class="kpi"><div class="lbl">Numbering Gaps</div><div class="val" id="aGap">—</div><div class="tiny" id="aGapEx">—</div></div>
+          <div class="kpi"><div class="lbl">Orphan Sales (no bank)</div><div class="val" id="aOrph">—</div><div class="tiny" id="aOrphEx">—</div></div>
+          <div class="kpi"><div class="lbl">Partial Payments</div><div class="val" id="aPart">—</div><div class="tiny" id="aPartEx">—</div></div>
+        </div>
+        <div class="bar">
+          <button class="btn pri" id="aCSV">Export Issues CSV</button>
+          <button class="btn" id="aPDF">Export Issues PDF</button>
+          <span class="note">Issues computed from current data.</span>
+        </div>
+        <div class="wrap">
+          <table id="aTbl">
+            <thead><tr><th>Category</th><th>Reference</th><th>Detail</th><th>Suggested Action</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- DATA -->
+      <section id="data" class="panel hidden">
+        <div class="title" style="font-size:1rem">Data & Settings</div>
+        <div class="bar">
+          <div class="grp"><div class="tiny">Import JSON</div><input type="file" id="fImp" accept=".json"></div>
+          <div class="grp"><button class="btn pri" id="dSave">Save to LocalStorage</button><button class="btn" id="dLoad">Load from LocalStorage</button><button class="btn" id="dClear">Clear LocalStorage</button></div>
+          <div class="grp"><button class="btn pri" id="dExport">Export JSON Bundle</button></div>
+          <span class="tiny right">Tip: commit a <span class="mono">/data/*.json</span> set and load via Settings &ldquo;Load from LocalStorage&rdquo; after importing.</span>
+        </div>
+        <div class="succ">Local-first. Nothing leaves your browser.</div>
+      </section>
+    </main>
+  </div>
+
+  <footer class="footer">© <span id="yr"></span> Internal ERP — Single-file</footer>
+</div>
+
+<!-- EDIT MODAL -->
+<div class="modal" id="modal" role="dialog" aria-modal="true">
+  <div class="card">
+    <div class="title" id="mTitle" style="font-size:1.05rem">Edit</div>
+    <div class="form" id="mForm"></div>
+    <div class="actions">
+      <button class="btn" id="mCancel">Cancel</button>
+      <button class="btn pri" id="mSave">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ===== Utilities ===== */
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const fmt = new Intl.NumberFormat(undefined,{style:"currency",currency:"EUR"});
+const num = v => (typeof v==="number"?v:(v?Number(String(v).replace(/[^0-9.-]/g,"")):0));
+const iso = d => (d?new Date(d).toISOString().slice(0,10):"");
+const today = ()=>iso(new Date());
+const by=(k,dir=1)=>(a,b)=>a[k]===b[k]?0:(a[k]>b[k]?dir:-dir);
+const csvCell = s=>`"${String(s??"").replace(/"/g,'""')}"`;
+const deb=(fn,ms=160)=>{let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>fn(...a),ms);}};
+
+/* ===== State ===== */
+const LS_KEYS = {sales:"erp_sales",purch:"erp_purch",bank:"erp_bank"};
+const State = {
+  sales:[], purch:[], bank:[],
+  sel:{sales:null,purch:null,bank:null},
+  sort:{sales:{k:"date",d:-1},purch:{k:"date",d:-1},bank:{k:"date",d:-1}},
+  filter:{
+    sales:{q:"",from:"",to:"",st:""},
+    purch:{q:"",from:"",to:"",st:""},
+    bank:{q:"",from:"",to:"",type:""}
+  },
+  cfg:{reconDays:5}
+};
+
+/* ===== Seed (if empty) ===== */
+const Seed = {
+  sales:[
+    {invoice_no:"INV-1001",date:"2025-10-02",customer:"ABC Corp",amount:1200,status:"unpaid",paid_date:"",pdf_link:"invoices/INV-1001.pdf",notes:"Website design"},
+    {invoice_no:"INV-1002",date:"2025-09-25",customer:"Delta LLC",amount:850.5,status:"paid",paid_date:"2025-10-01",pdf_link:"invoices/INV-1002.pdf",notes:"Maintenance"},
+    {invoice_no:"INV-1003",date:"2025-10-05",customer:"Gamma SA",amount:2300,status:"partial",paid_date:"2025-10-10",pdf_link:"invoices/INV-1003.pdf",notes:"Custom module"}
+  ],
+  purch:[
+    {invoice_no:"BILL-7001",date:"2025-09-29",supplier:"CloudHost",amount:400,status:"paid",paid_date:"2025-10-03",pdf_link:"bills/BILL-7001.pdf"},
+    {invoice_no:"BILL-7002",date:"2025-10-03",supplier:"OfficeMart",amount:215.9,status:"unpaid",paid_date:"",pdf_link:"bills/BILL-7002.pdf"}
+  ],
+  bank:[
+    {date:"2025-10-01",description:"Payment from Delta LLC INV-1002",amount:850.5,type:"credit",invoice_no:"INV-1002",match_status:"matched"},
+    {date:"2025-10-10",description:"ABC Corp partial INV-1003",amount:1150,type:"credit",invoice_no:"INV-1003",match_status:"partial"},
+    {date:"2025-10-12",description:"OfficeMart BILL-7002",amount:-215.9,type:"debit",invoice_no:"BILL-7002",match_status:"unmatched"},
+    {date:"2025-10-15",description:"Monthly hosting BILL-7001",amount:-400,type:"debit",invoice_no:"BILL-7001",match_status:"matched"}
+  ]
+};
+
+/* ===== LocalStorage ===== */
+function saveLS(){
+  localStorage.setItem(LS_KEYS.sales, JSON.stringify(State.sales));
+  localStorage.setItem(LS_KEYS.purch, JSON.stringify(State.purch));
+  localStorage.setItem(LS_KEYS.bank, JSON.stringify(State.bank));
+  $("#env").textContent="LocalStorage (saved)";
+}
+function loadLS(){
+  State.sales = JSON.parse(localStorage.getItem(LS_KEYS.sales) || "[]");
+  State.purch = JSON.parse(localStorage.getItem(LS_KEYS.purch) || "[]");
+  State.bank  = JSON.parse(localStorage.getItem(LS_KEYS.bank)  || "[]");
+  if(!(State.sales.length||State.purch.length||State.bank.length)){
+    State.sales = Seed.sales.slice(); State.purch = Seed.purch.slice(); State.bank = Seed.bank.slice();
+    $("#env").textContent="Seed data";
+  } else $("#env").textContent="LocalStorage (loaded)";
+  renderAll(); stamp();
+}
+function clearLS(){ localStorage.removeItem(LS_KEYS.sales);localStorage.removeItem(LS_KEYS.purch);localStorage.removeItem(LS_KEYS.bank); $("#env").textContent="LocalStorage (cleared)";}
+
+/* ===== Import/Export JSON ===== */
+function exportJSON(){
+  const data = {sales:State.sales,purch:State.purch,bank:State.bank, exported_at:new Date().toISOString()};
+  download("erp_bundle.json", JSON.stringify(data,null,2), "application/json");
+}
+function importJSONFile(file){
+  const fr=new FileReader();
+  fr.onload=()=>{
+    try{
+      const j=JSON.parse(fr.result);
+      if(Array.isArray(j)) { /* accept array of sales */ State.sales = j; }
+      else{
+        if(Array.isArray(j.sales)) State.sales=j.sales;
+        if(Array.isArray(j.purch)) State.purch=j.purch;
+        if(Array.isArray(j.bank))  State.bank=j.bank;
+      }
+      renderAll(); stamp(); $("#env").textContent="Imported (unsaved)";
+    }catch(e){ alert("Invalid JSON: "+e.message); }
+  };
+  fr.readAsText(file);
+}
+
+/* ===== Helpers ===== */
+function stamp(){ $("#lastRef").textContent=new Date().toLocaleString(); $("#yr").textContent=new Date().getFullYear(); }
+function setActive(tab){ $$("#nav button").forEach(b=>b.classList.toggle("active",b.dataset.tab===tab)); $$("main > section").forEach(s=>s.classList.toggle("hidden", s.id!==tab)); }
+function clickSort(tbl,stateKey){
+  $(`#${tbl} thead`).addEventListener("click",e=>{
+    if(e.target.tagName!=="TH")return;
+    const k=e.target.dataset.k; if(!k)return;
+    const s=State.sort[stateKey]; s.d = (s.k===k? -s.d : 1); s.k=k;
+    render[stateKey]();
+  });
+}
+function selectRow(tbody, stateKey){
+  tbody.querySelectorAll("tr").forEach(tr=>tr.addEventListener("click",()=>{
+    tbody.querySelectorAll("tr").forEach(r=>r.style.outline="");
+    tr.style.outline="2px solid var(--accent)";
+    const idx=+tr.dataset.i; State.sel[stateKey]=filtered[stateKey]()[idx]; // store by filtered index
+  }));
+}
+function csvDownload(name, headers, rows){
+  const head = headers.map(h=>csvCell(h.label)).join(",")+"\n";
+  const body = rows.map(r=> headers.map(h=>csvCell(h.get(r))).join(",")).join("\n");
+  download(name, head+body, "text/csv");
+}
+function download(name,content,mime){
+  const a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([content],{type:mime})); a.download=name; a.click(); URL.revokeObjectURL(a.href);
+}
+function printTableAsPDF(title, table){
+  const w=window.open("","_blank","width=1024,height=768");
+  w.document.write(`<html><head><title>${title}</title><style>
+    body{font-family:Arial,Helvetica,sans-serif;padding:16px} table{width:100%;border-collapse:collapse}
+    th,td{border:1px solid #ccc;padding:6px;text-align:left} thead{background:#eee}
+  </style></head><body><h2>${title}</h2>${table.outerHTML}</body></html>`);
+  w.document.close(); w.focus(); w.print();
+}
+
+/* ===== Filters ===== */
+const filtered = {
+  sales:()=> State.sales.filter(r=>{
+    const f=State.filter.sales, q=f.q.toLowerCase();
+    const inR=(!f.from||r.date>=f.from)&&(!f.to||r.date<=f.to);
+    const st = !f.st||r.status===f.st;
+    const qok = !q||[r.invoice_no,r.customer,r.notes].join(" ").toLowerCase().includes(q);
+    return inR&&st&&qok;
+  }).sort(by(State.sort.sales.k, State.sort.sales.d)),
+  purch:()=> State.purch.filter(r=>{
+    const f=State.filter.purch,q=f.q.toLowerCase();
+    const inR=(!f.from||r.date>=f.from)&&(!f.to||r.date<=f.to);
+    const st=!f.st||r.status===f.st;
+    const qok=!q||[r.invoice_no,r.supplier].join(" ").toLowerCase().includes(q);
+    return inR&&st&&qok;
+  }).sort(by(State.sort.purch.k, State.sort.purch.d)),
+  bank:()=> State.bank.filter(r=>{
+    const f=State.filter.bank,q=f.q.toLowerCase();
+    const inR=(!f.from||r.date>=f.from)&&(!f.to||r.date<=f.to);
+    const ty=!f.type||r.type===f.type;
+    const qok=!q||[r.description,r.invoice_no,r.amount].join(" ").toLowerCase().includes(q);
+    return inR&&ty&&qok;
+  }).sort(by(State.sort.bank.k, State.sort.bank.d))
+};
+
+/* ===== CRUD Modal ===== */
+let modalCtx=null; // {type:'sales'|'purch'|'bank', mode:'add'|'edit', rec:{}}
+const FIELDS = {
+  sales:[
+    ["invoice_no","Invoice #","text"],["date","Date","date"],["customer","Customer","text"],["amount","Amount","number"],
+    ["status","Status","select","paid,unpaid,partial"],["paid_date","Paid Date","date"],["pdf_link","PDF link","text"],["notes","Notes","textarea"]
+  ],
+  purch:[
+    ["invoice_no","Invoice #","text"],["date","Date","date"],["supplier","Supplier","text"],["amount","Amount","number"],
+    ["status","Status","select","paid,unpaid,partial"],["paid_date","Paid Date","date"],["pdf_link","PDF link","text"]
+  ],
+  bank:[
+    ["date","Date","date"],["description","Description","text"],["amount","Amount","number"],
+    ["type","Type","select","credit,debit"],["invoice_no","Invoice #","text"],["match_status","Match","select","matched,unmatched,partial,unknown"]
+  ]
+};
+function openModal(type, mode, rec){
+  modalCtx={type,mode,rec: Object.assign({},rec||{})};
+  $("#mTitle").textContent= (mode==="add"?"Add ":"Edit ")+type;
+  const form=$("#mForm"); form.innerHTML="";
+  for(const [k,lab,t,opt] of FIELDS[type]){
+    const id="f_"+k; const val=modalCtx.rec[k]??"";
+    form.insertAdjacentHTML("beforeend",`<div><label for="${id}">${lab}</label>${
+      t==="select"? `<select id="${id}">${opt.split(",").map(o=>`<option ${String(val)===o?'selected':''}>${o}</option>`).join("")}</select>`:
+      t==="textarea"? `<textarea id="${id}" rows="2">${val??""}</textarea>`:
+      `<input id="${id}" type="${t}" value="${t==="number"?String(val):String(val)}">`
+    }</div>`);
+  }
+  $("#modal").classList.add("open");
+}
+$("#mCancel").onclick=()=> $("#modal").classList.remove("open");
+$("#mSave").onclick=()=>{
+  const obj={};
+  for(const [k,_,t] of FIELDS[modalCtx.type]){
+    const v=$("#f_"+k).value;
+    obj[k]= (t==="number")? num(v) : v;
+  }
+  if(modalCtx.type!=="bank"){ obj.amount=num(obj.amount); }
+  if(modalCtx.mode==="add"){
+    State[modalCtx.type==="sales"?"sales":modalCtx.type==="purch"?"purch":"bank"].push(obj);
+  }else{
+    const col=State[modalCtx.type==="sales"?"sales":modalCtx.type==="purch"?"purch":"bank"];
+    const idx=col.indexOf(State.sel[modalCtx.type==="sales"?"sales":modalCtx.type==="purch"?"purch":"bank"]);
+    if(idx>-1) col[idx]=obj;
+  }
+  $("#modal").classList.remove("open");
+  renderAll(); $("#env").textContent="Edited (unsaved)"; stamp();
+};
+
+/* ===== Rendering ===== */
+function renderAll(){ renderKPIs(); renderAging(); render.sales(); render.purch(); render.bank(); renderAudit(); }
+
+function renderKPIs(){
+  const ym=new Date().toISOString().slice(0,7);
+  const sMonth=State.sales.filter(s=>(s.date||"").startsWith(ym));
+  $("#kpiSalesCnt").textContent=sMonth.length;
+  $("#kpiSalesSum").textContent=fmt.format(sMonth.reduce((a,b)=>a+num(b.amount),0));
+  const unpaid=State.sales.filter(s=>["unpaid","partial"].includes(s.status));
+  $("#kpiUnpaidCnt").textContent=unpaid.length;
+  $("#kpiUnpaidSum").textContent=fmt.format(unpaid.reduce((a,b)=>a+num(b.amount),0));
+  const pMonth=State.purch.filter(p=>(p.date||"").startsWith(ym));
+  $("#kpiPurchCnt").textContent=pMonth.length;
+  $("#kpiPurchSum").textContent=fmt.format(pMonth.reduce((a,b)=>a+num(b.amount),0));
+  const open=State.bank.filter(b=>b.match_status!=="matched");
+  $("#kpiBankOpen").textContent=open.length;
+  $("#kpiBankSum").textContent=fmt.format(open.reduce((a,b)=>a+Math.abs(num(b.amount)),0));
+  // quick checks
+  const dups=dupDetect(State.sales.map(x=>x.invoice_no).filter(Boolean));
+  $("#qcDup").textContent=`Duplicates: ${dups.length}`;
+  const gaps=numGaps(State.sales.map(x=>x.invoice_no));
+  $("#qcGap").textContent=`Numbering gaps: ${gaps.length}`;
+  const orph=State.sales.filter(s=>!State.bank.some(b=>b.invoice_no===s.invoice_no)&&s.status!=="paid").length;
+  $("#qcOrph").textContent=`Orphans (no bank): ${orph}`;
+}
+
+function renderAging(){
+  // Aging by customer on unpaid/partial; assume due in 30 days from invoice date
+  const buckets={}; // {customer:{c0:0,c30:0,c60:0,c90:0,c91:0}}
+  const now=new Date();
+  for(const s of State.sales){
+    if(s.status==="paid") continue;
+    const days=Math.floor((now - new Date(s.date))/(1000*3600*24));
+    const c=s.customer||"—";
+    buckets[c]=buckets[c]||{c0:0,c30:0,c60:0,c90:0,c91:0};
+    if(days<=0) buckets[c].c0+=num(s.amount);
+    else if(days<=30) buckets[c].c30+=num(s.amount);
+    else if(days<=60) buckets[c].c60+=num(s.amount);
+    else if(days<=90) buckets[c].c90+=num(s.amount);
+    else buckets[c].c91+=num(s.amount);
+  }
+  const tb=$("#aging tbody"); tb.innerHTML="";
+  Object.entries(buckets).forEach(([cust,b])=>{
+    const tot=b.c0+b.c30+b.c60+b.c90+b.c91;
+    tb.insertAdjacentHTML("beforeend",`<tr>
+      <td>${cust}</td>
+      <td class="mono">${fmt.format(b.c0)}</td>
+      <td class="mono">${fmt.format(b.c30)}</td>
+      <td class="mono">${fmt.format(b.c60)}</td>
+      <td class="mono">${fmt.format(b.c90)}</td>
+      <td class="mono">${fmt.format(b.c91)}</td>
+      <td class="mono"><b>${fmt.format(tot)}</b></td>
+    </tr>`);
+  });
+}
+
+const render = {
+  sales(){
+    const rows=filtered.sales(); const tb=$("#sTbl tbody"); tb.innerHTML="";
+    rows.forEach((r,i)=>tb.insertAdjacentHTML("beforeend", `<tr data-i="${i}">
+      <td>${r.invoice_no||""}</td><td>${r.date||""}</td><td>${r.customer||""}</td>
+      <td class="mono">${fmt.format(num(r.amount))}</td>
+      <td><span class="status ${r.status==="paid"?"ok":r.status==="unpaid"?"bad":"warn"}">${r.status||"—"}</span></td>
+      <td>${r.paid_date||"—"}</td>
+      <td>${r.pdf_link?`<a href="${r.pdf_link}" target="_blank">Open</a>`:"—"}</td>
+      <td>${r.notes||""}</td>
+    </tr>`));
+    selectRow(tb,"sales");
+  },
+  purch(){
+    const rows=filtered.purch(); const tb=$("#pTbl tbody"); tb.innerHTML="";
+    rows.forEach((r,i)=>tb.insertAdjacentHTML("beforeend", `<tr data-i="${i}">
+      <td>${r.invoice_no||""}</td><td>${r.date||""}</td><td>${r.supplier||""}</td>
+      <td class="mono">${fmt.format(num(r.amount))}</td>
+      <td><span class="status ${r.status==="paid"?"ok":r.status==="unpaid"?"bad":"warn"}">${r.status||"—"}</span></td>
+      <td>${r.paid_date||"—"}</td>
+      <td>${r.pdf_link?`<a href="${r.pdf_link}" target="_blank">Open</a>`:"—"}</td>
+    </tr>`));
+    selectRow(tb,"purch");
+  },
+  bank(){
+    const rows=filtered.bank(); const tb=$("#bTbl tbody"); tb.innerHTML="";
+    rows.forEach((r,i)=>tb.insertAdjacentHTML("beforeend", `<tr data-i="${i}">
+      <td>${r.date||""}</td><td>${r.description||""}</td>
+      <td class="mono">${fmt.format(num(r.amount))}</td><td>${r.type||""}</td>
+      <td>${r.invoice_no||""}</td>
+      <td><span class="status ${r.match_status==="matched"?"ok":r.match_status==="unmatched"?"bad":"warn"}">${r.match_status||"unknown"}</span></td>
+    </tr>`));
+    selectRow(tb,"bank");
+    $("#bStats").textContent=`${rows.length} tx • ${fmt.format(rows.reduce((a,b)=>a+num(b.amount),0))}`;
+    $("#bOpen").textContent=`Open: ${rows.filter(x=>x.match_status!=="matched").length}`;
+  }
+};
+
+/* ===== Audit ===== */
+function dupDetect(list){ const s=new Set(),d=new Set(); for(const v of list){ if(s.has(v)) d.add(v); else s.add(v);} return [...d]; }
+function numGaps(ids){
+  const arr=ids.map(x=>{ const m=String(x).match(/(\d+)$/); return m?+m[1]:null;}).filter(x=>x!=null).sort((a,b)=>a-b);
+  const gaps=[]; for(let i=1;i<arr.length;i++){ const diff=arr[i]-arr[i-1]; if(diff>1) gaps.push([arr[i-1],arr[i]]); } return gaps;
+}
+function renderAudit(){
+  const dups=dupDetect(State.sales.map(s=>s.invoice_no).filter(Boolean));
+  const gaps=numGaps(State.sales.map(s=>s.invoice_no));
+  const orph=State.sales.filter(s=>!State.bank.some(b=>b.invoice_no===s.invoice_no)&&s.status!=="paid");
+  const partial=State.sales.filter(s=>s.status==="partial");
+  $("#aDup").textContent=dups.length; $("#aDupEx").textContent=(dups.slice(0,5).join(", "))||"—";
+  $("#aGap").textContent=gaps.length; $("#aGapEx").textContent=(gaps.slice(0,3).map(g=>`${g[0]}→${g[1]}`).join(" · "))||"—";
+  $("#aOrph").textContent=orph.length; $("#aOrphEx").textContent=(orph.slice(0,3).map(o=>o.invoice_no).join(", "))||"—";
+  $("#aPart").textContent=partial.length; $("#aPartEx").textContent=(partial.slice(0,3).map(o=>o.invoice_no).join(", "))||"—";
+  // Table
+  const tb=$("#aTbl tbody"); tb.innerHTML="";
+  dups.forEach(x=>tb.insertAdjacentHTML("beforeend",`<tr><td><span class="badge">Duplicate</span></td><td class="mono">${x}</td><td>Invoice number repeats</td><td>Investigate/correct</td></tr>`));
+  gaps.forEach(g=>tb.insertAdjacentHTML("beforeend",`<tr><td><span class="badge">Gap</span></td><td class="mono">${g[0]}→${g[1]}</td><td>Missing sequence</td><td>Confirm voids/missing</td></tr>`));
+  orph.forEach(o=>tb.insertAdjacentHTML("beforeend",`<tr><td><span class="badge">Orphan</span></td><td class="mono">${o.invoice_no}</td><td>No matching bank payment</td><td>Chase/mark paid</td></tr>`));
+  partial.forEach(o=>tb.insertAdjacentHTML("beforeend",`<tr><td><span class="badge">Partial</span></td><td class="mono">${o.invoice_no}</td><td>Partially paid</td><td>Reconcile remaining</td></tr>`));
+  if(!tb.innerHTML) tb.innerHTML=`<tr><td colspan="4" class="succ">No issues found.</td></tr>`;
+}
+
+/* ===== Reconciliation ===== */
+function guessInvFromText(t){ const m=String(t).match(/(INV-\d+|BILL-\d+)/i); return m?m[1].toUpperCase():""; }
+function autoRecon(){
+  const list=[];
+  const w=State.cfg.reconDays;
+  // 1) confirm existing references
+  for(const b of State.bank){
+    if(b.invoice_no){
+      const inv= State.sales.find(s=>s.invoice_no===b.invoice_no) || State.purch.find(p=>p.invoice_no===b.invoice_no);
+      if(inv) list.push({bank:b,inv,score:200,label:`Confirm ${b.invoice_no} (${fmt.format(num(inv.amount))})`});
+    }else{
+      const invNo=guessInvFromText(b.description||""); if(invNo){
+        const inv= State.sales.find(s=>s.invoice_no===invNo) || State.purch.find(p=>p.invoice_no===invNo);
+        if(inv) list.push({bank:b,inv,score:180,label:`Link by text ${invNo} (${fmt.format(num(inv.amount))})`});
+      }
+    }
+  }
+  // 2) exact amount within date window
+  for(const b of State.bank.filter(x=>!x.invoice_no)){
+    const col = (b.type==="credit")? State.sales : State.purch;
+    for(const inv of col){
+      if(Math.abs(Math.abs(num(b.amount)) - Math.abs(num(inv.amount))) < 0.01){
+        const days=Math.abs((new Date(b.date)-new Date(inv.date))/(1000*3600*24));
+        if(days <= w) list.push({bank:b,inv,score:120-days,label:`Match amt ${fmt.format(inv.amount)} • ${inv.invoice_no}`});
+      }
+    }
+  }
+  list.sort((a,b)=>b.score-a.score);
+  const box=$("#bSug"); box.innerHTML="";
+  if(!list.length){ box.innerHTML=`<div class="note">No suggestions.</div>`; return; }
+  list.slice(0,50).forEach((s,i)=> box.insertAdjacentHTML("beforeend",
+    `<div class="grp" style="justify-content:space-between">
+      <div><b>${s.label}</b><div class="tiny mono">${s.bank.date} • ${fmt.format(num(s.bank.amount))} • ${s.bank.type}</div></div>
+      <button class="btn" data-i="${i}" id="ap${i}">Apply</button>
+    </div>`));
+  list.slice(0,50).forEach((s,i)=> $("#ap"+i).onclick=()=>{
+    s.bank.invoice_no=s.inv.invoice_no; s.bank.match_status="matched"; render.bank(); autoRecon(); $("#env").textContent="Reconciled (unsaved)";
+  });
+}
+
+/* ===== Reports ===== */
+function runReport(){
+  const t=$("#rType").value, from=$("#rFrom").value, to=$("#rTo").value;
+  const add=(k,v)=> tb.insertAdjacentHTML("beforeend",`<tr><td>${k}</td><td class="mono">${v}</td></tr>`);
+  const tb=$("#rTbl tbody"); tb.innerHTML="";
+  if(t==="sales"){
+    const rows=State.sales.filter(r=>(!from||r.date>=from)&&(!to||r.date<=to));
+    add("Count", rows.length); add("Total", fmt.format(rows.reduce((a,b)=>a+num(b.amount),0)));
+    add("Unpaid", fmt.format(rows.filter(r=>r.status!=="paid").reduce((a,b)=>a+num(b.amount),0)));
+  }else if(t==="purch"){
+    const rows=State.purch.filter(r=>(!from||r.date>=from)&&(!to||r.date<=to));
+    add("Count", rows.length); add("Total", fmt.format(rows.reduce((a,b)=>a+num(b.amount),0)));
+    add("Unpaid", fmt.format(rows.filter(r=>r.status!=="paid").reduce((a,b)=>a+num(b.amount),0)));
+  }else if(t==="aging"){
+    // reuse dashboard aging totals
+    const now=new Date(); let cur=0,a30=0,a60=0,a90=0,a91=0;
+    State.sales.forEach(s=>{
+      if(s.status==="paid")return;
+      const days=Math.floor((now - new Date(s.date))/(1000*3600*24));
+      const amt=num(s.amount);
+      if(days<=0) cur+=amt; else if(days<=30) a30+=amt; else if(days<=60) a60+=amt; else if(days<=90) a90+=amt; else a91+=amt;
+    });
+    add("Current", fmt.format(cur)); add("1–30", fmt.format(a30)); add("31–60", fmt.format(a60)); add("61–90", fmt.format(a90)); add("90+", fmt.format(a91));
+    add("Total", fmt.format(cur+a30+a60+a90+a91));
+  }else if(t==="bank"){
+    const rows=State.bank.filter(r=>(!from||r.date>=from)&&(!to||r.date<=to));
+    add("Count", rows.length); add("Net movement", fmt.format(rows.reduce((a,b)=>a+num(b.amount),0)));
+    add("Unmatched", rows.filter(r=>r.match_status!=="matched").length);
+  }
+}
+function exportReportCSV(){
+  const rows=[...$("#rTbl tbody").querySelectorAll("tr")].map(tr=>({field:tr.children[0].textContent,value:tr.children[1].textContent}));
+  csvDownload(`report_${$("#rType").value}_${today()}.csv`,[{label:"field",get:r=>r.field},{label:"value",get:r=>r.value}],rows);
+}
+
+/* ===== Events ===== */
+$("#nav").addEventListener("click",e=>{ if(e.target.tagName!=="BUTTON")return; setActive(e.target.dataset.tab); if(e.target.dataset.tab==="bank") autoRecon(); });
+["sQ","sFrom","sTo"].forEach(id=>$("#"+id).addEventListener("input", deb(()=>{ State.filter.sales.q=$("#sQ").value.toLowerCase(); State.filter.sales.from=$("#sFrom").value; State.filter.sales.to=$("#sTo").value; render.sales(); })));
+$("#sSt").onchange=()=>{ State.filter.sales.st=$("#sSt").value; render.sales(); };
+["pQ","pFrom","pTo"].forEach(id=>$("#"+id).addEventListener("input", deb(()=>{ State.filter.purch.q=$("#pQ").value.toLowerCase(); State.filter.purch.from=$("#pFrom").value; State.filter.purch.to=$("#pTo").value; render.purch(); })));
+$("#pSt").onchange=()=>{ State.filter.purch.st=$("#pSt").value; render.purch(); };
+["bQ","bFrom","bTo"].forEach(id=>$("#"+id).addEventListener("input", deb(()=>{ State.filter.bank.q=$("#bQ").value.toLowerCase(); State.filter.bank.from=$("#bFrom").value; State.filter.bank.to=$("#bTo").value; render.bank(); })));
+$("#bType").onchange=()=>{ State.filter.bank.type=$("#bType").value; render.bank(); };
+
+// sorting
+clickSort("sTbl","sales"); clickSort("pTbl","purch"); clickSort("bTbl","bank");
+
+// sales CRUD
+$("#sAdd").onclick=()=>openModal("sales","add");
+$("#sEdit").onclick=()=> State.sel.sales? openModal("sales","edit", State.sel.sales) : alert("Select a row");
+$("#sDel").onclick=()=>{ const sel=State.sel.sales; if(!sel) return alert("Select a row"); if(confirm("Delete selected?")){ State.sales=State.sales.filter(x=>x!==sel); State.sel.sales=null; render.sales(); $("#env").textContent="Edited (unsaved)"; }};
+// sales exports/open
+$("#sCSV").onclick=()=>{ const rows=filtered.sales(); const hdr=[{label:"invoice_no",get:r=>r.invoice_no},{label:"date",get:r=>r.date},{label:"customer",get:r=>r.customer},{label:"amount",get:r=>num(r.amount)},{label:"status",get:r=>r.status},{label:"paid_date",get:r=>r.paid_date},{label:"pdf_link",get:r=>r.pdf_link},{label:"notes",get:r=>r.notes}]; csvDownload(`sales_${today()}.csv`,hdr,rows); };
+$("#sPDF").onclick=()=> printTableAsPDF("Sales", $("#sTbl"));
+$("#sOpenPDF").onclick=()=>{ const r=State.sel.sales; if(r&&r.pdf_link) window.open(r.pdf_link,"_blank"); else alert("Select a row with PDF link"); };
+
+// purch CRUD
+$("#pAdd").onclick=()=>openModal("purch","add");
+$("#pEdit").onclick=()=> State.sel.purch? openModal("purch","edit", State.sel.purch) : alert("Select a row");
+$("#pDel").onclick=()=>{ const sel=State.sel.purch; if(!sel) return alert("Select a row"); if(confirm("Delete selected?")){ State.purch=State.purch.filter(x=>x!==sel); State.sel.purch=null; render.purch(); $("#env").textContent="Edited (unsaved)"; }};
+// purch export/open
+$("#pCSV").onclick=()=>{ const rows=filtered.purch(); const hdr=[{label:"invoice_no",get:r=>r.invoice_no},{label:"date",get:r=>r.date},{label:"supplier",get:r=>r.supplier},{label:"amount",get:r=>num(r.amount)},{label:"status",get:r=>r.status},{label:"paid_date",get:r=>r.paid_date},{label:"pdf_link",get:r=>r.pdf_link}]; csvDownload(`purchases_${today()}.csv`,hdr,rows); };
+$("#pPDF").onclick=()=> printTableAsPDF("Purchases", $("#pTbl"));
+$("#pOpenPDF").onclick=()=>{ const r=State.sel.purch; if(r&&r.pdf_link) window.open(r.pdf_link,"_blank"); else alert("Select a row with PDF link"); };
+
+// bank CRUD
+$("#bAdd").onclick=()=>openModal("bank","add");
+$("#bEdit").onclick=()=> State.sel.bank? openModal("bank","edit", State.sel.bank) : alert("Select a row");
+$("#bDel").onclick=()=>{ const sel=State.sel.bank; if(!sel) return alert("Select a row"); if(confirm("Delete selected?")){ State.bank=State.bank.filter(x=>x!==sel); State.sel.bank=null; render.bank(); $("#env").textContent="Edited (unsaved)"; }};
+$("#bCSV").onclick=()=>{ const rows=filtered.bank(); const hdr=[{label:"date",get:r=>r.date},{label:"description",get:r=>r.description},{label:"amount",get:r=>num(r.amount)},{label:"type",get:r=>r.type},{label:"invoice_no",get:r=>r.invoice_no},{label:"match_status",get:r=>r.match_status}]; csvDownload(`bank_${today()}.csv`,hdr,rows); };
+$("#bPDF").onclick=()=> printTableAsPDF("Bank", $("#bTbl"));
+$("#bRecon").onclick=autoRecon);
+
+// reports
+$("#rRun").onclick=runReport;
+$("#rCSV").onclick=exportReportCSV;
+$("#rPDF").onclick=()=> printTableAsPDF("Report", $("#rTbl"));
+
+// audit exports
+$("#aCSV").onclick=()=>{ const rows=[...$("#aTbl tbody").querySelectorAll("tr")].map(tr=>({cat:tr.children[0].innerText,ref:tr.children[1].innerText,detail:tr.children[2].innerText,action:tr.children[3].innerText})); const hdr=[{label:"category",get:r=>r.cat},{label:"reference",get:r=>r.ref},{label:"detail",get:r=>r.detail},{label:"suggested_action",get:r=>r.action}]; csvDownload(`audit_issues_${today()}.csv`,hdr,rows); };
+$("#aPDF").onclick=()=> printTableAsPDF("Audit Issues", $("#aTbl"));
+
+// data
+$("#dSave").onclick=saveLS; $("#dLoad").onclick=loadLS; $("#dClear").onclick=()=>{ if(confirm("Clear LocalStorage data?")){ clearLS(); } };
+$("#dExport").onclick=exportJSON;
+$("#fImp").onchange=e=>{ const f=e.target.files?.[0]; if(f) importJSONFile(f); };
+
+/* ===== Init ===== */
+function init(){
+  // Default from LocalStorage or seed
+  loadLS();
+  // Prefill date filters to month
+  const d=new Date(); const f=new Date(d.getFullYear(), d.getMonth(), 1);
+  $("#sFrom").value=$("#pFrom").value=$("#bFrom").value=$("#rFrom").value=iso(f);
+  $("#sTo").value=$("#pTo").value=$("#bTo").value=$("#rTo").value=today();
+  clickSort("sTbl","sales"); clickSort("pTbl","purch"); clickSort("bTbl","bank");
+}
+init();
+</script>
+</body>
+</html>
