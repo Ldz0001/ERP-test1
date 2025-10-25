@@ -1495,57 +1495,103 @@ function invoiceIdentifier(inv){
 function invoiceMatchKey(inv){
   return normalizeMatchKey(invoiceIdentifier(inv));
 }
-function extractBankDcRefs(str){
-  if(!str) return [];
-  const text=String(str);
+function extractBankDcRefs(bank){
+  if(!bank) return [];
+  const sources=[bank.invoice_no, bank.details, bank.concept, bank.description];
   const refs=[];
   const seen=new Set();
   const capture=raw=>{
     const trimmed=String(raw??"").trim();
     if(!trimmed) return;
-    const key=invKey(trimmed);
+    const prefixed=/^dc/i.test(trimmed)?trimmed:`DC ${trimmed}`;
+    const key=invKey(prefixed);
     if(!key || seen.has(key)) return;
     seen.add(key);
-    refs.push({raw:trimmed,key,fuzzy:normalizeMatchKey(trimmed)});
+    refs.push({raw:prefixed.trim(),key,fuzzy:normalizeMatchKey(prefixed)});
   };
-  const paren=/DC\s*\([^)]*\)/gi;
-  let match;
-  while((match=paren.exec(text))){
-    capture(match[0]);
-  }
-  if(!refs.length){
-    const simple=/DC[:\-\s]*[A-Za-z0-9\/_.,-]+/gi;
-    while((match=simple.exec(text))){
-      capture(match[0]);
+  const regex=/DC\s*[:\-]?\s*([A-Z0-9]+(?:[\/,;+][A-Z0-9]+)*)/gi;
+  for(const source of sources){
+    if(!source) continue;
+    const sanitized=String(source).replace(/[()]/g," ");
+    let matched=false;
+    let match;
+    while((match=regex.exec(sanitized))){
+      matched=true;
+      const block=match[1]||"";
+      if(!block){
+        capture(match[0]);
+        continue;
+      }
+      block.split(/[\/,;+]/).forEach(part=>{
+        const piece=part.trim();
+        if(piece) capture(`DC ${piece}`);
+      });
+    }
+    if(!matched && String(source).toUpperCase().includes("DC")){
+      capture(source);
     }
   }
   return refs;
 }
-function bankDcReconciliationCheck(bank){
+function bankDcReconciliationCheck(bank, supplierByDcKey, supplierByFuzzyKey, purchaseByInvoiceKey, purchaseByFuzzyKey){
   if(!bank) return null;
-  const refs=extractBankDcRefs(bank.invoice_no||"");
+  const refs=extractBankDcRefs(bank);
   if(!refs.length) return null;
-  const dcKeys=new Set(refs.map(ref=>ref.key));
-  const fuzzyKeys=new Set(refs.map(ref=>ref.fuzzy).filter(Boolean));
-  const supplierMatches=State.suppliers.filter(row=>{
-    const supplierKey=invKey(row.dc);
-    if(dcKeys.has(supplierKey)) return true;
-    const supplierFuzzy=normalizeMatchKey(row.dc);
-    return supplierFuzzy && fuzzyKeys.has(supplierFuzzy);
-  });
-  const total=supplierMatches.reduce((sum,row)=>sum+Math.abs(invoiceAmountValue(row)),0);
+  const purchases=[];
+  const seenPurchases=new Set();
+  const missingRefs=[];
+  for(const ref of refs){
+    let supplierRows=supplierByDcKey.get(ref.key);
+    if((!supplierRows || !supplierRows.length) && ref.fuzzy){
+      supplierRows=supplierByFuzzyKey.get(ref.fuzzy);
+    }
+    if(supplierRows && supplierRows.length){
+      for(const row of supplierRows){
+        const purchaseKey=invKey(row.numero_factura||row.dc||"");
+        let purchase=null;
+        if(purchaseKey){
+          purchase=purchaseByInvoiceKey.get(purchaseKey);
+          if(!purchase){
+            const purchaseFuzzy=normalizeMatchKey(row.numero_factura||row.dc||"");
+            if(purchaseFuzzy) purchase=purchaseByFuzzyKey.get(purchaseFuzzy);
+          }
+        }
+        if(!purchase){
+          purchase=purchaseByInvoiceKey.get(ref.key);
+        }
+        if(!purchase && ref.fuzzy){
+          purchase=purchaseByFuzzyKey.get(ref.fuzzy);
+        }
+        if(purchase && !seenPurchases.has(purchase)){
+          purchases.push(purchase);
+          seenPurchases.add(purchase);
+        }
+      }
+      continue;
+    }
+    missingRefs.push(ref);
+    let purchase=purchaseByInvoiceKey.get(ref.key);
+    if(!purchase && ref.fuzzy){
+      purchase=purchaseByFuzzyKey.get(ref.fuzzy);
+    }
+    if(purchase && !seenPurchases.has(purchase)){
+      purchases.push(purchase);
+      seenPurchases.add(purchase);
+    }
+  }
+  const total=purchases.reduce((sum,row)=>sum+Math.abs(invoiceAmountValue(row)),0);
   const bankAmt=Math.abs(num(bank.amount));
   let warningMessage="";
-  if(!supplierMatches.length){
-    const refsDisplay=refs.map(ref=>ref.raw).join(", ");
-    warningMessage=`No supplier invoices found for ${refsDisplay}. Please check.`;
-  }else if(Number.isFinite(bankAmt) && Math.abs(bankAmt-total)>0.01){
+  if(missingRefs.length){
+    const missingDisplay=missingRefs.map(ref=>ref.raw).join(", ");
+    warningMessage=`FACTURA references ${missingDisplay} but no supplier invoice with that DC was found.`;
+  }else if(Number.isFinite(bankAmt) && purchases.length && Math.abs(bankAmt-total)>0.01){
     const refsDisplay=refs.map(ref=>ref.raw).join(" + ");
     const totalText=fmt.format(total);
     const bankText=fmt.format(bankAmt);
-    warningMessage=`${refsDisplay} total ${totalText} does not match bank amount ${bankText}. Please check.`;
+    warningMessage=`FACTURA references ${refsDisplay} totaling ${totalText}, but bank amount is ${bankText}.`;
   }
-  return {refs,supplierMatches,total,warningMessage};
+  return {refs,purchases,missingRefs,total,warningMessage};
 }
 function invoiceAmountValue(inv){
   if(!inv) return 0;
@@ -1563,6 +1609,126 @@ function describeSuggestionTarget(inv){
   const id=invoiceIdentifier(inv) || "—";
   const amt=fmt.format(invoiceAmountValue(inv));
   return `${name} • ${id} • ${amt}`;
+}
+
+function describeSuggestionGroup(invoices){
+  const list=(invoices||[]).filter(Boolean);
+  if(!list.length) return "";
+  if(list.length===1) return describeSuggestionTarget(list[0]);
+  const supplierNames=new Set();
+  const parts=list.map(inv=>{
+    const supplier=[inv.supplier, inv.razon_social, inv.sociedad, inv.customer].find(Boolean);
+    if(supplier) supplierNames.add(supplier);
+    const id=invoiceIdentifier(inv) || "—";
+    const amt=fmt.format(Math.abs(invoiceAmountValue(inv)));
+    return `${id} (${amt})`;
+  });
+  const total=fmt.format(list.reduce((sum,inv)=>sum+Math.abs(invoiceAmountValue(inv)),0));
+  const supplierLabel=supplierNames.size?[...supplierNames].join(" + ")+" • ":"";
+  return `${supplierLabel}${parts.join(" + ")} • Total ${total}`;
+}
+
+function addReconciliationKeyCandidates(value, keySet, fuzzySet){
+  if(value==null) return;
+  const raw=String(value).trim();
+  if(!raw) return;
+  const tokens=[raw];
+  if(/[\\/,+;]/.test(raw)){
+    raw.split(/[\\/,+;]/).forEach(part=>{
+      const trimmed=part.trim();
+      if(trimmed && !tokens.includes(trimmed)) tokens.push(trimmed);
+    });
+  }
+  tokens.forEach(token=>{
+    const key=invKey(token);
+    if(key) keySet.add(key);
+    const fuzzy=normalizeMatchKey(token);
+    if(fuzzy) fuzzySet.add(fuzzy);
+  });
+}
+
+function collectPurchasesForBankMatch(bank, inv, extraInvs=[]){
+  const keySet=new Set();
+  const fuzzySet=new Set();
+  const matches=[];
+  const seen=new Set();
+  const addVal=value=>addReconciliationKeyCandidates(value, keySet, fuzzySet);
+  if(bank){
+    addVal(bank.invoice_no);
+    const refs=extractBankDcRefs(bank);
+    refs.forEach(ref=>{
+      if(ref.key) keySet.add(ref.key);
+      if(ref.fuzzy) fuzzySet.add(ref.fuzzy);
+      addVal(ref.raw);
+    });
+  }
+  const seeds=[inv, ...extraInvs];
+  seeds.forEach(rec=>{
+    if(!rec) return;
+    addVal(rec.invoice_no);
+    addVal(rec.numero_factura);
+    addVal(rec.dc);
+    if(rec.supplier_details){
+      addVal(rec.supplier_details.numero_factura);
+      addVal(rec.supplier_details.dc);
+    }
+  });
+  const consider=purchase=>{
+    if(!purchase || seen.has(purchase)) return;
+    seen.add(purchase);
+    matches.push(purchase);
+  };
+  for(const purchase of State.purch){
+    const values=[
+      invoiceIdentifier(purchase),
+      purchase.invoice_no,
+      purchase.numero_factura,
+      purchase.dc,
+      purchase.supplier_details?.numero_factura,
+      purchase.supplier_details?.dc
+    ];
+    const matched=values.some(val=>{
+      if(!val) return false;
+      const key=invKey(val);
+      if(key && keySet.has(key)) return true;
+      const fuzzy=normalizeMatchKey(val);
+      return Boolean(fuzzy && fuzzySet.has(fuzzy));
+    });
+    if(matched) consider(purchase);
+  }
+  if(inv && State.purch.includes(inv)) consider(inv);
+  return matches;
+}
+
+function applyReconciliationMatch(bank, inv, extraInvs=[]){
+  if(!bank) return;
+  const matchDate=bankPrimaryDate(bank);
+  const purchases=collectPurchasesForBankMatch(bank, inv, extraInvs);
+  if(purchases.length){
+    purchases.forEach(purchase=>{
+      purchase.status="conciliado";
+      if(matchDate && !purchase.paid_date) purchase.paid_date=matchDate;
+      if(matchDate && !purchase.supplier_paid_date) purchase.supplier_paid_date=matchDate;
+      purchase.supplier_payment_status="PAGADA";
+      if(purchase._source==="supplier" && purchase.supplier_details){
+        if(matchDate && !purchase.supplier_details.fecha_pago) purchase.supplier_details.fecha_pago=matchDate;
+        purchase.supplier_details.estado_pago="PAGADA";
+      }
+    });
+  }else if(inv && State.purch.includes(inv)){
+    inv.status="conciliado";
+    if(matchDate && !inv.paid_date) inv.paid_date=matchDate;
+    if(matchDate && !inv.supplier_paid_date) inv.supplier_paid_date=matchDate;
+    inv.supplier_payment_status="PAGADA";
+    if(inv._source==="supplier" && inv.supplier_details){
+      if(matchDate && !inv.supplier_details.fecha_pago) inv.supplier_details.fecha_pago=matchDate;
+      inv.supplier_details.estado_pago="PAGADA";
+    }
+  }
+  if(inv && State.sales.includes(inv)){
+    inv.status="paid";
+    if(matchDate && !inv.paid_date) inv.paid_date=matchDate;
+  }
 }
 function findInvoiceByNumber(no){
   if(!no) return null;
@@ -1594,27 +1760,65 @@ function autoRecon(){
     amount:Math.abs(invoiceAmountValue(s)),
     date:s.date||""
   }));
-  const addSuggestion=(bank,inv,score,method)=>{
-    if(!inv) return;
+  const purchaseByInvoiceKey=new Map();
+  const purchaseByFuzzyKey=new Map();
+  State.purch.forEach(p=>{
+    const keys=[
+      invoiceIdentifier(p),
+      p.invoice_no,
+      p.numero_factura,
+      p.dc,
+      p.supplier_details?.numero_factura,
+      p.supplier_details?.dc
+    ];
+    keys.forEach(val=>{
+      if(!val) return;
+      const key=invKey(val);
+      if(key && !purchaseByInvoiceKey.has(key)) purchaseByInvoiceKey.set(key,p);
+      const fuzzy=normalizeMatchKey(val);
+      if(fuzzy && !purchaseByFuzzyKey.has(fuzzy)) purchaseByFuzzyKey.set(fuzzy,p);
+    });
+  });
+  const supplierByDcKey=new Map();
+  const supplierByFuzzyKey=new Map();
+  State.suppliers.forEach(row=>{
+    const key=invKey(row.dc);
+    if(key){
+      if(!supplierByDcKey.has(key)) supplierByDcKey.set(key,[]);
+      supplierByDcKey.get(key).push(row);
+    }
+    const fuzzy=normalizeMatchKey(row.dc);
+    if(fuzzy){
+      if(!supplierByFuzzyKey.has(fuzzy)) supplierByFuzzyKey.set(fuzzy,[]);
+      supplierByFuzzyKey.get(fuzzy).push(row);
+    }
+  });
+  const addSuggestion=(bank,invList,score,method)=>{
+    const invoices=(Array.isArray(invList)?invList:[invList]).filter(Boolean);
+    if(!invoices.length) return;
     const bankId=bankIndex.get(bank);
     if(bankId==null) return;
-    const invId=invoiceIdentifier(inv) || `amt:${invoiceAmountValue(inv).toFixed(2)}`;
-    const supplierId=normalizeMatchKey([inv.supplier,inv.razon_social,inv.sociedad,inv.customer].find(Boolean)||"");
-    const key=`${bankId}|${invId}|${supplierId}`;
+    const invIds=invoices.map(item=>invoiceIdentifier(item)||`amt:${invoiceAmountValue(item).toFixed(2)}`);
+    const supplierIds=invoices.map(item=>normalizeMatchKey([item.supplier,item.razon_social,item.sociedad,item.customer].find(Boolean)||""))
+      .filter(Boolean);
+    const invKeyPart=invIds.slice().sort().join("+");
+    const supplierKeyPart=supplierIds.slice().sort().join("+");
+    const key=`${bankId}|${invKeyPart}|${supplierKeyPart}`;
     const existing=seen.get(key);
     if(existing){
       if(existing.score>=score) return;
       existing.score=score;
       existing.method=method;
-      existing.inv=inv;
+      existing.inv=invoices[0];
+      existing.invoices=invoices;
       return;
     }
-    const suggestion={bank,inv,score,method};
+    const suggestion={bank,inv:invoices[0],invoices,score,method};
     seen.set(key,suggestion);
     list.push(suggestion);
   };
   for(const b of State.bank){
-    const dcCheck=bankDcReconciliationCheck(b);
+    const dcCheck=bankDcReconciliationCheck(b, supplierByDcKey, supplierByFuzzyKey, purchaseByInvoiceKey, purchaseByFuzzyKey);
     if(dcCheck) dcChecks.set(b, dcCheck);
     if((b.match_status||"").toLowerCase()==="matched") continue;
     const conceptTxt=bankConceptText(b);
@@ -1623,13 +1827,19 @@ function autoRecon(){
     const bankDate=bankPrimaryDate(b);
     if(b.invoice_no){
       const inv=findInvoiceByNumber(b.invoice_no);
-      if(inv) addSuggestion(b,inv,240,'FACTURA reference in bank row');
+      if(inv) addSuggestion(b,[inv],240,'FACTURA reference in bank row');
     }
     if(!b.invoice_no){
       const guess=guessInvFromText(`${b.description||""} ${b.concept||""} ${b.details||""}`.trim());
       if(guess){
         const inv=findInvoiceByNumber(guess);
-        if(inv) addSuggestion(b,inv,210,'Invoice detected in description');
+        if(inv) addSuggestion(b,[inv],210,'Invoice detected in description');
+      }
+    }
+    if(dcCheck && dcCheck.purchases && dcCheck.purchases.length){
+      const validPurchases=dcCheck.purchases.filter(inv=>State.purch.includes(inv));
+      if(validPurchases.length){
+        addSuggestion(b,validPurchases,235,'FACTURA DC match');
       }
     }
     const pool=b.type==="credit"?sales:purchases;
@@ -1637,7 +1847,7 @@ function autoRecon(){
       for(const cand of pool){
         if(!cand.key) continue;
         if(conceptKey.includes(cand.key)){
-          addSuggestion(b,cand.rec,200,'Invoice reference in concept');
+          addSuggestion(b,[cand.rec],200,'Invoice reference in concept');
         }
       }
     }
@@ -1657,7 +1867,7 @@ function autoRecon(){
               : `Amount match (±${w} days)`;
           const scoreBase=150 + (supplierHit?40:invoiceHit?20:0);
           const score=scoreBase - (Number.isFinite(days)?days:0);
-          addSuggestion(b,cand.rec,score,method);
+          addSuggestion(b,[cand.rec],score,method);
         }
       }
     }
@@ -1681,26 +1891,37 @@ function autoRecon(){
   }
   top.forEach((s,i)=>{
     renderWarningForBank(s.bank);
-    const label=describeSuggestionTarget(s.inv);
+    const label=describeSuggestionGroup(s.invoices || [s.inv]);
+    const invoiceInfo=(s.invoices && s.invoices.length>1)
+      ? `<div class="tiny mono">${s.invoices.map(inv=>{
+          const id=invoiceIdentifier(inv)||'—';
+          const amt=fmt.format(Math.abs(invoiceAmountValue(inv)));
+          return `${id}=${amt}`;
+        }).join(' + ')}</div>`
+      : "";
     const amountText=formatBankMoney(s.bank.amount, s.bank.amount_display) || fmt.format(num(s.bank.amount));
     const infoParts=[bankPrimaryDate(s.bank)||"—", amountText, s.bank.type||"", s.bank.concept||s.bank.details||s.bank.description||""].filter(Boolean);
     box.insertAdjacentHTML("beforeend",
       `<div class="grp" style="justify-content:space-between">
         <div><b>${label}</b>
           <div class="tiny">Method: ${s.method}</div>
+          ${invoiceInfo}
           <div class="tiny mono">${infoParts.join(" • ")}</div>
         </div>
         <button class="btn" data-i="${i}" id="ap${i}">Apply</button>
       </div>`);
   });
   top.forEach((s,i)=> $("#ap"+i).onclick=()=>{
-    const invId=invoiceIdentifier(s.inv);
-    if(invId) s.bank.invoice_no=invId;
-    else if(s.inv.invoice_no) s.bank.invoice_no=s.inv.invoice_no;
+    const invoiceIds=(s.invoices||[s.inv]).map(inv=>invoiceIdentifier(inv)).filter(Boolean);
+    if(invoiceIds.length) s.bank.invoice_no=invoiceIds.join(' + ');
+    else if(s.inv && s.inv.invoice_no) s.bank.invoice_no=s.inv.invoice_no;
     s.bank.match_status="matched";
-    render.bank();
+    const extras=(s.invoices||[]).slice(1);
+    applyReconciliationMatch(s.bank, s.inv, extras);
+    refreshAll();
     autoRecon();
-    $("#env").textContent="Reconciled (unsaved)";
+    saveLS();
+    $("#env").textContent="Reconciled (saved)";
   });
   dcChecks.forEach((info,bank)=>renderWarningForBank(bank));
 }
