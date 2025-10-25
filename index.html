@@ -1698,7 +1698,7 @@ function autoRecon(){
     if(invId) s.bank.invoice_no=invId;
     else if(s.inv.invoice_no) s.bank.invoice_no=s.inv.invoice_no;
     s.bank.match_status="matched";
-    render.bank();
+    refreshAll();
     autoRecon();
     $("#env").textContent="Reconciled (unsaved)";
   });
