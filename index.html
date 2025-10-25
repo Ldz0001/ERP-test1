@@ -324,6 +324,11 @@ tbody tr:hover{background:var(--row-hover)}
           <div class="grp"><button class="btn pri" id="supTemplate">Download template</button><button class="btn" id="supClear">Clear imported</button></div>
           <span class="tiny right">Imported rows: <span id="supCount">0</span></span>
         </div>
+        <div class="bar" style="margin-top:1rem">
+          <div class="grp"><div class="tiny">Import bank movements (.xlsx)</div><input type="file" id="bankFile" accept=".xlsx,.xls,.csv"></div>
+          <div class="grp"><button class="btn" id="bankClear">Clear imported bank</button></div>
+          <span class="tiny right">Imported bank rows: <span id="bankCount">0</span></span>
+        </div>
         <div class="wrap" style="margin-top:1rem">
           <table id="supTbl">
             <thead><tr id="supHead"></tr></thead>
@@ -375,6 +380,28 @@ function ensureXLSX(){
   }).catch(err=>{ xlsxLoader=null; throw err; });
   return xlsxLoader;
 }
+
+const BANK_IMPORT_SOURCE = "bank_import";
+const BANK_HEADER_MAP = {
+  f_ejecucion:"execution_date",
+  f_valor:"value_date",
+  concepto:"concept",
+  importe:"amount",
+  saldo:"balance",
+  factura:"invoice",
+  desglose:"details"
+};
+const BANK_HEADER_LABELS = {
+  f_ejecucion:"F. ejecución",
+  f_valor:"F. valor",
+  concepto:"Concepto",
+  importe:"Importe",
+  saldo:"Saldo",
+  factura:"FACTURA",
+  desglose:"Desglose"
+};
+const BANK_REQUIRED_HEADERS = Object.keys(BANK_HEADER_LABELS);
+const BANK_HEADER_REVERSE = Object.fromEntries(Object.entries(BANK_HEADER_MAP).map(([k,v])=>[v,k]));
 
 /* ===== State ===== */
 const LS_KEYS = {sales:"erp_sales",purch:"erp_purch",bank:"erp_bank",suppliers:"erp_suppliers"};
@@ -521,6 +548,90 @@ function normalizeSupplierRow(row){
   return hasData?obj:null;
 }
 
+function fixMojibake(str){
+  if(typeof str!=="string"||!str) return str;
+  if(!/[ÃÂÊÎÔãõñáéíóúÁÉÍÓÚàèìòùäëïöüÄËÏÖÜ]/.test(str)) return str;
+  if(typeof escape!=="function"||typeof decodeURIComponent!=="function") return str;
+  try{
+    return decodeURIComponent(escape(str));
+  }catch(err){
+    return str;
+  }
+}
+
+function normalizeBankHeader(key){
+  if(!key) return "";
+  const fixed=fixMojibake(String(key).trim());
+  return fixed
+    .normalize("NFD").replace(/[\u0300-\u036f]/g,"")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g,"_")
+    .replace(/^_|_$/g,"");
+}
+
+function resolveBankHeaderKey(key){
+  const norm=normalizeBankHeader(key);
+  if(!norm) return {normalized:"",mapped:""};
+  if(BANK_HEADER_MAP[norm]){
+    return {normalized:norm,mapped:BANK_HEADER_MAP[norm]};
+  }
+  const canonical=BANK_HEADER_REVERSE[norm];
+  if(canonical){
+    return {normalized:canonical,mapped:BANK_HEADER_MAP[canonical]};
+  }
+  return {normalized:norm,mapped:norm};
+}
+
+function parseMaybeNumber(val){
+  if(val==null || val==="") return null;
+  if(typeof val==="number") return Number.isFinite(val)?val:null;
+  const str=String(val).trim();
+  if(!str) return null;
+  const parsed=num(str);
+  return Number.isFinite(parsed)?parsed:null;
+}
+
+function normalizeBankRow(row){
+  const mapped={};
+  let hasData=false;
+  for(const [key,val] of Object.entries(row||{})){
+    if(key==null) continue;
+    const {normalized,mapped:mappedKey}=resolveBankHeaderKey(key);
+    if(!normalized||!mappedKey) continue;
+    mapped[mappedKey]=typeof val==="string"?fixMojibake(val):val;
+    if(val!=null){
+      if(typeof val==="number" && !Number.isNaN(val)) hasData=true;
+      else if(String(val).trim()!="") hasData=true;
+    }
+  }
+  if(!hasData) return null;
+  const executionDate=normalizeExcelDate(mapped.execution_date||"");
+  const valueDate=normalizeExcelDate(mapped.value_date||"");
+  const date=valueDate||executionDate||"";
+  const concept=fixMojibake(String(mapped.concept??"")).trim();
+  const details=fixMojibake(String(mapped.details??"")).trim();
+  const description=[concept,details].filter(Boolean).join(" — ") || concept || details || "";
+  const invoice=fixMojibake(String(mapped.invoice??mapped.invoice_no??"")).trim();
+  const amountVal=parseMaybeNumber(mapped.amount);
+  const balanceVal=parseMaybeNumber(mapped.balance);
+  const amount=amountVal??0;
+  const type=amount>=0?"credit":"debit";
+  return {
+    date,
+    description,
+    amount,
+    type,
+    invoice_no:invoice,
+    match_status:"unmatched",
+    execution_date:executionDate,
+    value_date:valueDate,
+    balance:balanceVal??"",
+    concept,
+    details,
+    _source:BANK_IMPORT_SOURCE
+  };
+}
+
 function supplierCellText(col,val){
   if(val==null||val==="") return "";
   if(col.type==="currency"){
@@ -568,6 +679,49 @@ function applySupplierRows(rows){
   $("#env").textContent="Supplier invoices imported (unsaved)";
 }
 
+function applyBankImportRows(rows, headers=[]){
+  const headerSet=new Set();
+  if(Array.isArray(headers) && headers.length){
+    for(const header of headers){
+      const {normalized}=resolveBankHeaderKey(header);
+      if(normalized) headerSet.add(normalized);
+    }
+  }else if(Array.isArray(rows) && rows.length){
+    for(const row of rows){
+      for(const key of Object.keys(row||{})){
+        const {normalized}=resolveBankHeaderKey(key);
+        if(normalized) headerSet.add(normalized);
+      }
+      if(headerSet.size) break;
+    }
+  }
+  if((rows?.length||0) || headerSet.size){
+    if(headerSet.size===0 && rows?.length){
+      throw new Error("Unable to detect bank column headers. Ensure the first row contains the expected titles.");
+    }
+    const missing=BANK_REQUIRED_HEADERS.filter(req=>!headerSet.has(req));
+    if(missing.length){
+      const friendly=missing.map(key=>BANK_HEADER_LABELS[key]||key);
+      throw new Error(`Missing required columns: ${friendly.join(", ")}`);
+    }
+  }
+  const normalized=(rows||[]).map(normalizeBankRow).filter(Boolean);
+  const manual=State.bank.filter(b=>b._source!==BANK_IMPORT_SOURCE);
+  State.bank=[...manual,...normalized];
+  State.sel.bank=null;
+  refreshAll();
+  $("#env").textContent = normalized.length
+    ? `Bank transactions imported (${normalized.length}) (unsaved)`
+    : "Bank import contained no rows; existing imported entries cleared";
+}
+
+function updateBankImportSummary(){
+  const cnt=$("#bankCount");
+  if(!cnt) return;
+  const imported=State.bank.filter(b=>b._source===BANK_IMPORT_SOURCE).length;
+  cnt.textContent=imported;
+}
+
 function parseCSVLine(line){
   const res=[]; let field=""; let inQuotes=false;
   for(let i=0;i<line.length;i++){
@@ -580,6 +734,100 @@ function parseCSVLine(line){
   }
   res.push(field);
   return res.map(c=>c.trim());
+}
+
+function parseCSVTable(text){
+  const sanitized=String(text??"").replace(/^\uFEFF/,"");
+  const lines=sanitized.split(/\r?\n/).filter((line,i,arr)=>!(i===arr.length-1 && line.trim()===""));
+  while(lines.length && !lines[0].trim()) lines.shift();
+  if(!lines.length) return {headers:[],rows:[]};
+  const headers=parseCSVLine(lines[0]);
+  const rows=[];
+  for(let i=1;i<lines.length;i++){
+    const line=lines[i];
+    if(!line.trim()) continue;
+    const cells=parseCSVLine(line);
+    if(cells.every(cell=>cell==="")) continue;
+    const row={};
+    headers.forEach((h,idx)=>{
+      if(!h) return;
+      row[h]=cells[idx]??"";
+    });
+    rows.push(row);
+  }
+  return {headers,rows};
+}
+
+function safeSheetCellValue(cell){
+  if(!cell) return {value:"",hasContent:false};
+  let value;
+  try{
+    value=cell.v;
+  }catch(err){
+    if(typeof console!=="undefined" && typeof console.warn==="function"){
+      console.warn("Failed to read raw cell value", err);
+    }
+  }
+  if((value==null || value==="") && cell){
+    try{
+      const formatted=cell.w;
+      if(formatted!=null && formatted!=="") value=formatted;
+    }catch(err){
+      if(typeof console!=="undefined" && typeof console.warn==="function"){
+        console.warn("Failed to read formatted cell value", err);
+      }
+    }
+  }
+  if(typeof value==="string") value=value.trim();
+  if(value==null || value==="" || (typeof value==="number" && Number.isNaN(value))){
+    return {value:"",hasContent:false};
+  }
+  return {value,hasContent:true};
+}
+
+function sheetToTable(sheet){
+  const utils=window.XLSX?.utils;
+  if(!sheet||!utils||!sheet["!ref"]) return {headers:[],rows:[]};
+  const range=utils.decode_range(sheet["!ref"]);
+  let headerRow=-1;
+  let headerValues=[];
+  for(let r=range.s.r;r<=range.e.r;r++){
+    const current=[];
+    let nonEmpty=false;
+    for(let c=range.s.c;c<=range.e.c;c++){
+      const cell=sheet[utils.encode_cell({r,c})];
+      const {value,hasContent}=safeSheetCellValue(cell);
+      if(hasContent) nonEmpty=true;
+      current.push(value);
+    }
+    if(nonEmpty){
+      headerRow=r;
+      headerValues=current.map(v=>{
+        if(v==null) return "";
+        const str=typeof v==="string"?v:String(v);
+        return str.trim();
+      });
+      break;
+    }
+  }
+  if(headerRow<0) return {headers:[],rows:[]};
+  const cleanHeaders=headerValues.map(v=>String(v??"").trim());
+  const rows=[];
+  for(let r=headerRow+1;r<=range.e.r;r++){
+    const row={};
+    let hasData=false;
+    for(let c=range.s.c;c<=range.e.c;c++){
+      const header=cleanHeaders[c-range.s.c];
+      if(!header) continue;
+      const cell=sheet[utils.encode_cell({r,c})];
+      const {value,hasContent}=safeSheetCellValue(cell);
+      if(hasContent) hasData=true;
+      row[header]=value;
+    }
+    if(hasData) rows.push(row);
+  }
+  const finalHeaders=cleanHeaders.filter(Boolean);
+  return {headers:finalHeaders,rows};
 }
 
 async function importSupplierExcel(file){
@@ -618,8 +866,48 @@ async function importSupplierExcel(file){
         const wb=XLSX.read(data,{type:"array",cellDates:true});
         const sheet=wb.Sheets[wb.SheetNames[0]];
         if(!sheet){ alert("No sheets found in workbook"); return; }
-        const rows=XLSX.utils.sheet_to_json(sheet,{defval:"",raw:true,cellDates:true});
+        const {rows}=sheetToTable(sheet);
         applySupplierRows(rows);
+      }catch(err){
+        console.error(err);
+        alert("Failed to parse Excel file: "+err.message);
+      }
+    };
+    fr.readAsArrayBuffer(file);
+  }
+}
+
+async function importBankExcel(file){
+  const name=file.name.toLowerCase();
+  if(name.endsWith(".csv")){
+    const fr=new FileReader();
+    fr.onload=()=>{
+      try{
+        const {headers,rows}=parseCSVTable(fr.result);
+        applyBankImportRows(rows, headers);
+      }catch(err){
+        console.error(err);
+        alert("Failed to parse CSV file: "+err.message);
+      }
+    };
+    fr.readAsText(file);
+  }else{
+    try{
+      await ensureXLSX();
+    }catch(err){
+      console.error(err);
+      alert("Failed to load Excel parser: "+err.message);
+      return;
+    }
+    const fr=new FileReader();
+    fr.onload=()=>{
+      try{
+        const data=new Uint8Array(fr.result);
+        const wb=XLSX.read(data,{type:"array",cellDates:true});
+        const sheet=wb.Sheets[wb.SheetNames[0]];
+        if(!sheet){ alert("No sheets found in workbook"); return; }
+        const {headers,rows}=sheetToTable(sheet);
+        applyBankImportRows(rows, headers);
       }catch(err){
         console.error(err);
         alert("Failed to parse Excel file: "+err.message);
@@ -1070,6 +1358,7 @@ const render = {
     selectRow(tb,"bank");
     $("#bStats").textContent=`${rows.length} tx • ${fmt.format(rows.reduce((a,b)=>a+num(b.amount),0))}`;
     $("#bOpen").textContent=`Open: ${rows.filter(x=>x.match_status!=="matched").length}`;
+    updateBankImportSummary();
   },
   suppliers: renderSuppliersTable
 };
@@ -1333,6 +1622,17 @@ $("#supClear").onclick=()=>{
     syncPurchFromSuppliers();
     refreshAll();
     $("#env").textContent="Supplier data cleared";
+  }
+};
+$("#bankFile").onchange=e=>{ const f=e.target.files?.[0]; if(f){ importBankExcel(f); e.target.value=""; } };
+$("#bankClear").onclick=()=>{
+  const hasImported=State.bank.some(b=>b._source===BANK_IMPORT_SOURCE);
+  if(!hasImported){ alert("No imported bank transactions to clear."); return; }
+  if(confirm("Clear imported bank transactions?")){
+    State.bank=State.bank.filter(b=>b._source!==BANK_IMPORT_SOURCE);
+    State.sel.bank=null;
+    refreshAll();
+    $("#env").textContent="Imported bank data cleared";
   }
 };
 
