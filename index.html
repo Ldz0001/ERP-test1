@@ -242,11 +242,13 @@ tbody tr:hover{background:var(--row-hover)}
               <table id="bTbl">
                 <thead>
                   <tr>
-                    <th data-k="date">Date</th>
-                    <th data-k="description">Description</th>
-                    <th data-k="amount" class="mono">Amount</th>
-                    <th data-k="type">Type</th>
-                    <th data-k="invoice_no">Invoice #</th>
+                    <th data-k="execution_date">F. ejecución</th>
+                    <th data-k="value_date">F. valor</th>
+                    <th data-k="concept">Concepto</th>
+                    <th data-k="amount" class="mono">Importe</th>
+                    <th data-k="balance" class="mono">Saldo</th>
+                    <th data-k="invoice_no">FACTURA</th>
+                    <th data-k="details">Desglose</th>
                     <th data-k="match_status">Match</th>
                   </tr>
                 </thead><tbody></tbody>
@@ -324,6 +326,11 @@ tbody tr:hover{background:var(--row-hover)}
           <div class="grp"><button class="btn pri" id="supTemplate">Download template</button><button class="btn" id="supClear">Clear imported</button></div>
           <span class="tiny right">Imported rows: <span id="supCount">0</span></span>
         </div>
+        <div class="bar" style="margin-top:1rem">
+          <div class="grp"><div class="tiny">Import bank movements (.xlsx)</div><input type="file" id="bankFile" accept=".xlsx,.xls,.csv"></div>
+          <div class="grp"><button class="btn" id="bankClear">Clear imported bank</button></div>
+          <span class="tiny right">Imported bank rows: <span id="bankCount">0</span></span>
+        </div>
         <div class="wrap" style="margin-top:1rem">
           <table id="supTbl">
             <thead><tr id="supHead"></tr></thead>
@@ -358,6 +365,7 @@ const iso = d => (d?new Date(d).toISOString().slice(0,10):"");
 const today = ()=>iso(new Date());
 const by=(k,dir=1)=>(a,b)=>a[k]===b[k]?0:(a[k]>b[k]?dir:-dir);
 const csvCell = s=>`"${String(s??"").replace(/"/g,'""')}"`;
+const htmlEsc = str => String(str??"").replace(/[&<>"']/g, ch=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[ch]||ch));
 const deb=(fn,ms=160)=>{let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>fn(...a),ms);}};
 const invKey=v=>(v??"").toString().trim().toUpperCase();
 const XLSX_SRC = "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js";
@@ -376,6 +384,28 @@ function ensureXLSX(){
   return xlsxLoader;
 }
 
+const BANK_IMPORT_SOURCE = "bank_import";
+const BANK_HEADER_MAP = {
+  f_ejecucion:"execution_date",
+  f_valor:"value_date",
+  concepto:"concept",
+  importe:"amount",
+  saldo:"balance",
+  factura:"invoice",
+  desglose:"details"
+};
+const BANK_HEADER_LABELS = {
+  f_ejecucion:"F. ejecución",
+  f_valor:"F. valor",
+  concepto:"Concepto",
+  importe:"Importe",
+  saldo:"Saldo",
+  factura:"FACTURA",
+  desglose:"Desglose"
+};
+const BANK_REQUIRED_HEADERS = Object.keys(BANK_HEADER_LABELS);
+const BANK_HEADER_REVERSE = Object.fromEntries(Object.entries(BANK_HEADER_MAP).map(([k,v])=>[v,k]));
+
 /* ===== State ===== */
 const LS_KEYS = {sales:"erp_sales",purch:"erp_purch",bank:"erp_bank",suppliers:"erp_suppliers"};
 const PURCH_COL_PREF_KEY = "erp_purch_hidden_cols";
@@ -383,7 +413,7 @@ const THEME_KEY = "erp_theme";
 const State = {
   sales:[], purch:[], bank:[], suppliers:[],
   sel:{sales:null,purch:null,bank:null},
-  sort:{sales:{k:"date",d:-1},purch:{k:"date",d:-1},bank:{k:"date",d:-1}},
+  sort:{sales:{k:"date",d:-1},purch:{k:"date",d:-1},bank:{k:"value_date",d:-1}},
   filter:{
     sales:{q:"",from:"",to:"",st:""},
     purch:{q:"",from:"",to:"",st:""},
@@ -521,6 +551,137 @@ function normalizeSupplierRow(row){
   return hasData?obj:null;
 }
 
+function fixMojibake(str){
+  if(typeof str!=="string"||!str) return str;
+  if(!/[ÃÂÊÎÔãõñáéíóúÁÉÍÓÚàèìòùäëïöüÄËÏÖÜ]/.test(str)) return str;
+  if(typeof escape!=="function"||typeof decodeURIComponent!=="function") return str;
+  try{
+    return decodeURIComponent(escape(str));
+  }catch(err){
+    return str;
+  }
+}
+
+function normalizeBankHeader(key){
+  if(!key) return "";
+  const fixed=fixMojibake(String(key).trim());
+  return fixed
+    .normalize("NFD").replace(/[\u0300-\u036f]/g,"")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g,"_")
+    .replace(/^_|_$/g,"");
+}
+
+function resolveBankHeaderKey(key){
+  const norm=normalizeBankHeader(key);
+  if(!norm) return {normalized:"",mapped:""};
+  if(BANK_HEADER_MAP[norm]){
+    return {normalized:norm,mapped:BANK_HEADER_MAP[norm]};
+  }
+  const canonical=BANK_HEADER_REVERSE[norm];
+  if(canonical){
+    return {normalized:canonical,mapped:BANK_HEADER_MAP[canonical]};
+  }
+  return {normalized:norm,mapped:norm};
+}
+
+function parseMaybeNumber(val){
+  if(val==null || val==="") return null;
+  if(typeof val==="number") return Number.isFinite(val)?val:null;
+  const str=String(val).trim();
+  if(!str) return null;
+  const parsed=num(str);
+  return Number.isFinite(parsed)?parsed:null;
+}
+
+function normalizeMatchText(str){
+  if(str==null) return "";
+  return fixMojibake(String(str))
+    .normalize("NFD").replace(/[\u0300-\u036f]/g,"")
+    .toLowerCase();
+}
+
+function normalizeMatchKey(str){
+  return normalizeMatchText(str).replace(/[^a-z0-9]/g,"");
+}
+
+function bankPrimaryDate(row){
+  if(!row) return "";
+  return row.value_date || row.execution_date || row.date || "";
+}
+
+function bankSortValue(row,key){
+  if(!row) return "";
+  if(key==="value_date"||key==="execution_date"||key==="date"){
+    return bankPrimaryDate(row);
+  }
+  if(key==="amount"){
+    const val=typeof row.amount==="number"?row.amount:num(row.amount);
+    return Number.isFinite(val)?val:0;
+  }
+  if(key==="balance"){
+    if(typeof row.balance==="number" && Number.isFinite(row.balance)) return row.balance;
+    const val=num(row.balance_display||0);
+    return Number.isFinite(val)?val:0;
+  }
+  return row[key]??"";
+}
+
+function formatBankMoney(value, display){
+  if(display!=null && String(display).trim()!="") return display;
+  if(value==null || value==="") return "";
+  const n=typeof value==="number"?value:num(value);
+  return Number.isFinite(n)?fmt.format(n):"";
+}
+
+function normalizeBankRow(row){
+  const mapped={};
+  let hasData=false;
+  for(const [key,val] of Object.entries(row||{})){
+    if(key==null) continue;
+    const {normalized,mapped:mappedKey}=resolveBankHeaderKey(key);
+    if(!normalized||!mappedKey) continue;
+    mapped[mappedKey]=typeof val==="string"?fixMojibake(val):val;
+    if(val!=null){
+      if(typeof val==="number" && !Number.isNaN(val)) hasData=true;
+      else if(String(val).trim()!="") hasData=true;
+    }
+  }
+  if(!hasData) return null;
+  const executionDate=normalizeExcelDate(mapped.execution_date||"");
+  const valueDate=normalizeExcelDate(mapped.value_date||"");
+  const date=valueDate||executionDate||"";
+  const concept=fixMojibake(String(mapped.concept??"")).trim();
+  const details=fixMojibake(String(mapped.details??"")).trim();
+  const description=[concept,details].filter(Boolean).join(" — ") || concept || details || "";
+  const invoice=fixMojibake(String(mapped.invoice??mapped.invoice_no??"")).trim();
+  const amountRaw=mapped.amount;
+  const balanceRaw=mapped.balance;
+  const amountVal=parseMaybeNumber(amountRaw);
+  const balanceVal=parseMaybeNumber(balanceRaw);
+  const amount=Number.isFinite(amountVal)?amountVal:0;
+  const amountDisplay=!Number.isFinite(amountVal)&&amountRaw!=null&&String(amountRaw).trim()!==""?String(amountRaw):"";
+  const balance=Number.isFinite(balanceVal)?balanceVal:null;
+  const balanceDisplay=!Number.isFinite(balanceVal)&&balanceRaw!=null&&String(balanceRaw).trim()!==""?String(balanceRaw):"";
+  const type=amount>=0?"credit":"debit";
+  return {
+    date,
+    description,
+    amount,
+    amount_display:amountDisplay,
+    type,
+    invoice_no:invoice,
+    match_status:"unmatched",
+    execution_date:executionDate,
+    value_date:valueDate,
+    balance,
+    balance_display:balanceDisplay,
+    concept,
+    details,
+    _source:BANK_IMPORT_SOURCE
+  };
+}
+
 function supplierCellText(col,val){
   if(val==null||val==="") return "";
   if(col.type==="currency"){
@@ -568,6 +729,49 @@ function applySupplierRows(rows){
   $("#env").textContent="Supplier invoices imported (unsaved)";
 }
 
+function applyBankImportRows(rows, headers=[]){
+  const headerSet=new Set();
+  if(Array.isArray(headers) && headers.length){
+    for(const header of headers){
+      const {normalized}=resolveBankHeaderKey(header);
+      if(normalized) headerSet.add(normalized);
+    }
+  }else if(Array.isArray(rows) && rows.length){
+    for(const row of rows){
+      for(const key of Object.keys(row||{})){
+        const {normalized}=resolveBankHeaderKey(key);
+        if(normalized) headerSet.add(normalized);
+      }
+      if(headerSet.size) break;
+    }
+  }
+  if((rows?.length||0) || headerSet.size){
+    if(headerSet.size===0 && rows?.length){
+      throw new Error("Unable to detect bank column headers. Ensure the first row contains the expected titles.");
+    }
+    const missing=BANK_REQUIRED_HEADERS.filter(req=>!headerSet.has(req));
+    if(missing.length){
+      const friendly=missing.map(key=>BANK_HEADER_LABELS[key]||key);
+      throw new Error(`Missing required columns: ${friendly.join(", ")}`);
+    }
+  }
+  const normalized=(rows||[]).map(normalizeBankRow).filter(Boolean);
+  const manual=State.bank.filter(b=>b._source!==BANK_IMPORT_SOURCE);
+  State.bank=[...manual,...normalized];
+  State.sel.bank=null;
+  refreshAll();
+  $("#env").textContent = normalized.length
+    ? `Bank transactions imported (${normalized.length}) (unsaved)`
+    : "Bank import contained no rows; existing imported entries cleared";
+}
+
+function updateBankImportSummary(){
+  const cnt=$("#bankCount");
+  if(!cnt) return;
+  const imported=State.bank.filter(b=>b._source===BANK_IMPORT_SOURCE).length;
+  cnt.textContent=imported;
+}
+
 function parseCSVLine(line){
   const res=[]; let field=""; let inQuotes=false;
   for(let i=0;i<line.length;i++){
@@ -580,6 +784,100 @@ function parseCSVLine(line){
   }
   res.push(field);
   return res.map(c=>c.trim());
+}
+
+function parseCSVTable(text){
+  const sanitized=String(text??"").replace(/^\uFEFF/,"");
+  const lines=sanitized.split(/\r?\n/).filter((line,i,arr)=>!(i===arr.length-1 && line.trim()===""));
+  while(lines.length && !lines[0].trim()) lines.shift();
+  if(!lines.length) return {headers:[],rows:[]};
+  const headers=parseCSVLine(lines[0]);
+  const rows=[];
+  for(let i=1;i<lines.length;i++){
+    const line=lines[i];
+    if(!line.trim()) continue;
+    const cells=parseCSVLine(line);
+    if(cells.every(cell=>cell==="")) continue;
+    const row={};
+    headers.forEach((h,idx)=>{
+      if(!h) return;
+      row[h]=cells[idx]??"";
+    });
+    rows.push(row);
+  }
+  return {headers,rows};
+}
+
+function safeSheetCellValue(cell){
+  if(!cell) return {value:"",hasContent:false};
+  let value;
+  try{
+    value=cell.v;
+  }catch(err){
+    if(typeof console!=="undefined" && typeof console.warn==="function"){
+      console.warn("Failed to read raw cell value", err);
+    }
+  }
+  if((value==null || value==="") && cell){
+    try{
+      const formatted=cell.w;
+      if(formatted!=null && formatted!=="") value=formatted;
+    }catch(err){
+      if(typeof console!=="undefined" && typeof console.warn==="function"){
+        console.warn("Failed to read formatted cell value", err);
+      }
+    }
+  }
+  if(typeof value==="string") value=value.trim();
+  if(value==null || value==="" || (typeof value==="number" && Number.isNaN(value))){
+    return {value:"",hasContent:false};
+  }
+  return {value,hasContent:true};
+}
+
+function sheetToTable(sheet){
+  const utils=window.XLSX?.utils;
+  if(!sheet||!utils||!sheet["!ref"]) return {headers:[],rows:[]};
+  const range=utils.decode_range(sheet["!ref"]);
+  let headerRow=-1;
+  let headerValues=[];
+  for(let r=range.s.r;r<=range.e.r;r++){
+    const current=[];
+    let nonEmpty=false;
+    for(let c=range.s.c;c<=range.e.c;c++){
+      const cell=sheet[utils.encode_cell({r,c})];
+      const {value,hasContent}=safeSheetCellValue(cell);
+      if(hasContent) nonEmpty=true;
+      current.push(value);
+    }
+    if(nonEmpty){
+      headerRow=r;
+      headerValues=current.map(v=>{
+        if(v==null) return "";
+        const str=typeof v==="string"?v:String(v);
+        return str.trim();
+      });
+      break;
+    }
+  }
+  if(headerRow<0) return {headers:[],rows:[]};
+  const cleanHeaders=headerValues.map(v=>String(v??"").trim());
+  const rows=[];
+  for(let r=headerRow+1;r<=range.e.r;r++){
+    const row={};
+    let hasData=false;
+    for(let c=range.s.c;c<=range.e.c;c++){
+      const header=cleanHeaders[c-range.s.c];
+      if(!header) continue;
+      const cell=sheet[utils.encode_cell({r,c})];
+      const {value,hasContent}=safeSheetCellValue(cell);
+      if(hasContent) hasData=true;
+      row[header]=value;
+    }
+    if(hasData) rows.push(row);
+  }
+  const finalHeaders=cleanHeaders.filter(Boolean);
+  return {headers:finalHeaders,rows};
 }
 
 async function importSupplierExcel(file){
@@ -618,8 +916,48 @@ async function importSupplierExcel(file){
         const wb=XLSX.read(data,{type:"array",cellDates:true});
         const sheet=wb.Sheets[wb.SheetNames[0]];
         if(!sheet){ alert("No sheets found in workbook"); return; }
-        const rows=XLSX.utils.sheet_to_json(sheet,{defval:"",raw:true,cellDates:true});
+        const {rows}=sheetToTable(sheet);
         applySupplierRows(rows);
+      }catch(err){
+        console.error(err);
+        alert("Failed to parse Excel file: "+err.message);
+      }
+    };
+    fr.readAsArrayBuffer(file);
+  }
+}
+
+async function importBankExcel(file){
+  const name=file.name.toLowerCase();
+  if(name.endsWith(".csv")){
+    const fr=new FileReader();
+    fr.onload=()=>{
+      try{
+        const {headers,rows}=parseCSVTable(fr.result);
+        applyBankImportRows(rows, headers);
+      }catch(err){
+        console.error(err);
+        alert("Failed to parse CSV file: "+err.message);
+      }
+    };
+    fr.readAsText(file);
+  }else{
+    try{
+      await ensureXLSX();
+    }catch(err){
+      console.error(err);
+      alert("Failed to load Excel parser: "+err.message);
+      return;
+    }
+    const fr=new FileReader();
+    fr.onload=()=>{
+      try{
+        const data=new Uint8Array(fr.result);
+        const wb=XLSX.read(data,{type:"array",cellDates:true});
+        const sheet=wb.Sheets[wb.SheetNames[0]];
+        if(!sheet){ alert("No sheets found in workbook"); return; }
+        const {headers,rows}=sheetToTable(sheet);
+        applyBankImportRows(rows, headers);
       }catch(err){
         console.error(err);
         alert("Failed to parse Excel file: "+err.message);
@@ -658,13 +996,30 @@ const filtered = {
     const qok=!q||haystack.toLowerCase().includes(q);
     return inR&&stOk&&qok;
   }).sort(by(State.sort.purch.k, State.sort.purch.d)),
-  bank:()=> State.bank.filter(r=>{
-    const f=State.filter.bank,q=(f.q||"").toLowerCase();
-    const inR=(!f.from||r.date>=f.from)&&(!f.to||r.date<=f.to);
-    const ty=!f.type||r.type===f.type;
-    const qok=!q||[r.description,r.invoice_no,r.amount].join(" ").toLowerCase().includes(q);
-    return inR&&ty&&qok;
-  }).sort(by(State.sort.bank.k, State.sort.bank.d))
+  bank:()=>{
+    const f=State.filter.bank;
+    const q=normalizeMatchText(f.q||"");
+    const rows=State.bank.filter(r=>{
+      const rowDate=bankPrimaryDate(r);
+      const inR=(!f.from||rowDate>=f.from)&&(!f.to||rowDate<=f.to);
+      const ty=!f.type||r.type===f.type;
+      if(!inR||!ty) return false;
+      if(!q) return true;
+      const haystack=[
+        r.concept,r.details,r.invoice_no,r.description,r.amount_display,r.balance_display,
+        bankPrimaryDate(r), fmt.format(num(r.amount)),
+        r.balance!=null?fmt.format(num(r.balance)):"", r.type
+      ].map(normalizeMatchText).join(" ");
+      return haystack.includes(q);
+    });
+    const {k,d}=State.sort.bank;
+    return rows.sort((a,b)=>{
+      const av=bankSortValue(a,k);
+      const bv=bankSortValue(b,k);
+      if(av===bv) return 0;
+      return av>bv?d:-d;
+    });
+  }
 };
 
 /* ===== CRUD Modal ===== */
@@ -683,8 +1038,9 @@ const FIELDS = {
     ["pdf_link","PDF link","text"]
   ],
   bank:[
-    ["date","Date","date"],["description","Description","text"],["amount","Amount","number"],
-    ["type","Type","select","credit,debit"],["invoice_no","Invoice #","text"],["match_status","Match","select","matched,unmatched,partial,unknown"]
+    ["execution_date","F. ejecución","date"],["value_date","F. valor","date"],["concept","Concepto","text"],
+    ["details","Desglose","textarea"],["amount","Importe","number"],["balance","Saldo","number"],
+    ["invoice_no","FACTURA","text"],["match_status","Match","select","matched,unmatched,partial,unknown"]
   ]
 };
 
@@ -946,7 +1302,20 @@ $("#mSave").onclick=()=>{
     const v=$("#f_"+k).value;
     obj[k]= (t==="number")? num(v) : v;
   }
-  if(modalCtx.type!=="bank"){ obj.amount=num(obj.amount); }
+  if(modalCtx.type==="bank"){
+    const amountInput=$("#f_amount").value;
+    const balanceInput=$("#f_balance").value;
+    obj.amount = amountInput===""?0:num(amountInput);
+    obj.amount_display="";
+    obj.balance = balanceInput===""?null:obj.balance;
+    obj.balance_display="";
+    obj.type = obj.amount>=0?"credit":"debit";
+    obj.match_status = obj.match_status||"unmatched";
+    obj.date = bankPrimaryDate(obj);
+    obj.description=[obj.concept,obj.details].filter(Boolean).join(" — ");
+  }else{
+    obj.amount=num(obj.amount);
+  }
   const key=modalCtx.type==="sales"?"sales":modalCtx.type==="purch"?"purch":"bank";
   const col=State[key];
   if(modalCtx.mode==="add"){
@@ -1062,14 +1431,19 @@ const render = {
   bank(){
     const rows=filtered.bank(); const tb=$("#bTbl tbody"); tb.innerHTML="";
     rows.forEach((r,i)=>tb.insertAdjacentHTML("beforeend", `<tr data-i="${i}">
-      <td>${r.date||""}</td><td>${r.description||""}</td>
-      <td class="mono">${fmt.format(num(r.amount))}</td><td>${r.type||""}</td>
+      <td>${r.execution_date||r.date||""}</td>
+      <td>${r.value_date||""}</td>
+      <td>${r.concept||""}</td>
+      <td class="mono">${formatBankMoney(r.amount, r.amount_display)}</td>
+      <td class="mono">${formatBankMoney(r.balance, r.balance_display)}</td>
       <td>${r.invoice_no||""}</td>
+      <td>${r.details||""}</td>
       <td><span class="status ${r.match_status==="matched"?"ok":r.match_status==="unmatched"?"bad":"warn"}">${r.match_status||"unknown"}</span></td>
     </tr>`));
     selectRow(tb,"bank");
     $("#bStats").textContent=`${rows.length} tx • ${fmt.format(rows.reduce((a,b)=>a+num(b.amount),0))}`;
     $("#bOpen").textContent=`Open: ${rows.filter(x=>x.match_status!=="matched").length}`;
+    updateBankImportSummary();
   },
   suppliers: renderSuppliersTable
 };
@@ -1104,8 +1478,286 @@ function resetReconSuggestions(msg='Click "Auto-Reconcile" to generate suggestio
   const box=$("#bSug");
   if(box) box.innerHTML=`<div class="note">${msg}</div>`;
 }
+function bankConceptText(bank){
+  return normalizeMatchText([bank?.concept, bank?.details, bank?.description].join(" "));
+}
+function bankConceptKey(bank){
+  return normalizeMatchKey([bank?.concept, bank?.details, bank?.description].join(" "));
+}
+function supplierNameVariants(inv){
+  return [inv?.supplier, inv?.razon_social, inv?.sociedad, inv?.customer]
+    .map(normalizeMatchText)
+    .filter(Boolean);
+}
+function invoiceIdentifier(inv){
+  return inv?.invoice_no || inv?.numero_factura || inv?.dc || "";
+}
+function invoiceMatchKey(inv){
+  return normalizeMatchKey(invoiceIdentifier(inv));
+}
+function extractBankDcRefs(bank){
+  if(!bank) return [];
+  const sources=[bank.invoice_no, bank.details, bank.concept, bank.description];
+  const refs=[];
+  const seen=new Set();
+  const capture=raw=>{
+    const trimmed=String(raw??"").trim();
+    if(!trimmed) return;
+    const prefixed=/^dc/i.test(trimmed)?trimmed:`DC ${trimmed}`;
+    const key=invKey(prefixed);
+    if(!key || seen.has(key)) return;
+    seen.add(key);
+    refs.push({raw:prefixed.trim(),key,fuzzy:normalizeMatchKey(prefixed)});
+  };
+  const regex=/DC\s*[:\-]?\s*([A-Z0-9]+(?:[\/,;+][A-Z0-9]+)*)/gi;
+  for(const source of sources){
+    if(!source) continue;
+    const sanitized=String(source).replace(/[()]/g," ");
+    let matched=false;
+    let match;
+    while((match=regex.exec(sanitized))){
+      matched=true;
+      const block=match[1]||"";
+      if(!block){
+        capture(match[0]);
+        continue;
+      }
+      block.split(/[\/,;+]/).forEach(part=>{
+        const piece=part.trim();
+        if(piece) capture(`DC ${piece}`);
+      });
+    }
+    if(!matched && String(source).toUpperCase().includes("DC")){
+      capture(source);
+    }
+  }
+  return refs;
+}
+function bankDcReconciliationCheck(bank, supplierByDcKey, supplierByFuzzyKey, purchaseByInvoiceKey, purchaseByFuzzyKey){
+  if(!bank) return null;
+  const refs=extractBankDcRefs(bank);
+  if(!refs.length) return null;
+  const purchases=[];
+  const seenPurchases=new Set();
+  const pushPurchase=candidate=>{
+    let added=false;
+    if(Array.isArray(candidate)){
+      candidate.forEach(item=>{ if(pushPurchase(item)) added=true; });
+      return added;
+    }
+    if(candidate && !seenPurchases.has(candidate)){
+      seenPurchases.add(candidate);
+      purchases.push(candidate);
+      added=true;
+    }
+    return added;
+  };
+  const missingRefs=[];
+  for(const ref of refs){
+    let supplierRows=supplierByDcKey.get(ref.key);
+    if((!supplierRows || !supplierRows.length) && ref.fuzzy){
+      supplierRows=supplierByFuzzyKey.get(ref.fuzzy);
+    }
+    if(supplierRows && supplierRows.length){
+      for(const row of supplierRows){
+        const purchaseKey=invKey(row.numero_factura||row.dc||"");
+        let addedForRow=false;
+        if(purchaseKey){
+          const fromKey=purchaseByInvoiceKey.get(purchaseKey);
+          if(fromKey) addedForRow=pushPurchase(fromKey)||addedForRow;
+          const purchaseFuzzy=normalizeMatchKey(row.numero_factura||row.dc||"");
+          if(purchaseFuzzy) addedForRow=pushPurchase(purchaseByFuzzyKey.get(purchaseFuzzy))||addedForRow;
+        }
+        if(!addedForRow){
+          addedForRow=pushPurchase(purchaseByInvoiceKey.get(ref.key))||addedForRow;
+          if(!addedForRow && ref.fuzzy){
+            addedForRow=pushPurchase(purchaseByFuzzyKey.get(ref.fuzzy))||addedForRow;
+          }
+        }
+      }
+      continue;
+    }
+    const addedFromKey=pushPurchase(purchaseByInvoiceKey.get(ref.key));
+    const addedFromFuzzy=ref.fuzzy ? pushPurchase(purchaseByFuzzyKey.get(ref.fuzzy)) : false;
+    if(!addedFromKey && !addedFromFuzzy){
+      missingRefs.push(ref);
+    }
+  }
+  const total=purchases.reduce((sum,row)=>sum+Math.abs(invoiceAmountValue(row)),0);
+  const bankAmt=Math.abs(num(bank.amount));
+  let warningMessage="";
+  if(missingRefs.length){
+    const missingDisplay=missingRefs.map(ref=>ref.raw).join(", ");
+    warningMessage=`FACTURA references ${missingDisplay} but no supplier invoice with that DC was found.`;
+  }else if(Number.isFinite(bankAmt) && purchases.length && Math.abs(bankAmt-total)>0.01){
+    const refsDisplay=refs.map(ref=>ref.raw).join(" + ");
+    const totalText=fmt.format(total);
+    const bankText=fmt.format(bankAmt);
+    warningMessage=`FACTURA references ${refsDisplay} totaling ${totalText}, but bank amount is ${bankText}.`;
+  }
+  return {refs,purchases,missingRefs,total,warningMessage};
+}
+function invoiceAmountValue(inv){
+  if(!inv) return 0;
+  const candidates=[inv.amount, inv.importe_total, inv.base_amount];
+  for(const val of candidates){
+    const numVal=num(val);
+    if(Number.isFinite(numVal) && Math.abs(numVal)>0.0001) return numVal;
+  }
+  const fallback=num(inv.amount);
+  return Number.isFinite(fallback)?fallback:0;
+}
+const SUGGESTION_KEY_PROP="__reconKey";
+function suggestionTargetKey(rec){
+  if(!rec) return "null";
+  const candidates=[invoiceIdentifier(rec), rec?.invoice_no, rec?.numero_factura, rec?.dc, rec?.id, rec?.reference];
+  for(const val of candidates){
+    const key=invKey(val);
+    if(key) return key;
+  }
+  const idxP=State.purch.indexOf(rec);
+  if(idxP>=0) return `purch#${idxP}`;
+  const idxS=State.sales.indexOf(rec);
+  if(idxS>=0) return `sales#${idxS}`;
+  if(!rec[SUGGESTION_KEY_PROP]){
+    rec[SUGGESTION_KEY_PROP]=`obj#${Math.random().toString(36).slice(2)}`;
+  }
+  return rec[SUGGESTION_KEY_PROP];
+}
+function describeSuggestionTarget(inv){
+  if(!inv) return "";
+  const name=[inv.supplier, inv.razon_social, inv.sociedad, inv.customer].find(Boolean) || "—";
+  const id=invoiceIdentifier(inv) || inv.numero_factura || inv.dc || "—";
+  const amt=fmt.format(Math.abs(invoiceAmountValue(inv)));
+  return `${name} • ${id} • ${amt}`;
+}
+function describeSuggestionHeadline(suggestion){
+  if(!suggestion) return "";
+  if(suggestion.headline) return suggestion.headline;
+  const total=fmt.format(Math.abs(suggestion.total ?? suggestion.targets.reduce((sum,rec)=>sum+Math.abs(invoiceAmountValue(rec)),0)));
+  if(suggestion.targets.length>1){
+    return `${suggestion.targets.length} invoices • Total ${total}`;
+  }
+  return describeSuggestionTarget(suggestion.targets[0]);
+}
+
+function addReconciliationKeyCandidates(value, keySet, fuzzySet){
+  if(value==null) return;
+  const raw=String(value).trim();
+  if(!raw) return;
+  const tokens=[raw];
+  if(/[\\/,+;]/.test(raw)){
+    raw.split(/[\\/,+;]/).forEach(part=>{
+      const trimmed=part.trim();
+      if(trimmed && !tokens.includes(trimmed)) tokens.push(trimmed);
+    });
+  }
+  tokens.forEach(token=>{
+    const key=invKey(token);
+    if(key) keySet.add(key);
+    const fuzzy=normalizeMatchKey(token);
+    if(fuzzy) fuzzySet.add(fuzzy);
+  });
+}
+
+function collectPurchasesForBankMatch(bank, inv){
+  const keySet=new Set();
+  const fuzzySet=new Set();
+  const matches=[];
+  const seen=new Set();
+  const addVal=value=>addReconciliationKeyCandidates(value, keySet, fuzzySet);
+  if(bank){
+    addVal(bank.invoice_no);
+    const refs=extractBankDcRefs(bank);
+    refs.forEach(ref=>{
+      if(ref.key) keySet.add(ref.key);
+      if(ref.fuzzy) fuzzySet.add(ref.fuzzy);
+      addVal(ref.raw);
+    });
+  }
+  const seeds=[inv];
+  seeds.forEach(rec=>{
+    if(!rec) return;
+    addVal(rec.invoice_no);
+    addVal(rec.numero_factura);
+    addVal(rec.dc);
+    if(rec.supplier_details){
+      addVal(rec.supplier_details.numero_factura);
+      addVal(rec.supplier_details.dc);
+    }
+  });
+  const consider=purchase=>{
+    if(!purchase || seen.has(purchase)) return;
+    seen.add(purchase);
+    matches.push(purchase);
+  };
+  for(const purchase of State.purch){
+    const values=[
+      invoiceIdentifier(purchase),
+      purchase.invoice_no,
+      purchase.numero_factura,
+      purchase.dc,
+      purchase.supplier_details?.numero_factura,
+      purchase.supplier_details?.dc
+    ];
+    const matched=values.some(val=>{
+      if(!val) return false;
+      const key=invKey(val);
+      if(key && keySet.has(key)) return true;
+      const fuzzy=normalizeMatchKey(val);
+      return Boolean(fuzzy && fuzzySet.has(fuzzy));
+    });
+    if(matched) consider(purchase);
+  }
+  if(inv && State.purch.includes(inv)) consider(inv);
+  return matches;
+}
+
+function applyReconciliationMatch(bank, inv, explicitPurchases=[]){
+  if(!bank) return;
+  const matchDate=bankPrimaryDate(bank);
+  const purchases=collectPurchasesForBankMatch(bank, inv);
+  const seen=new Set(purchases);
+  explicitPurchases.forEach(purchase=>{
+    if(purchase && !seen.has(purchase)){
+      seen.add(purchase);
+      purchases.push(purchase);
+    }
+  });
+  if(purchases.length){
+    purchases.forEach(purchase=>{
+      purchase.status="conciliado";
+      if(matchDate && !purchase.paid_date) purchase.paid_date=matchDate;
+      if(matchDate && !purchase.supplier_paid_date) purchase.supplier_paid_date=matchDate;
+      purchase.supplier_payment_status="PAGADA";
+      if(purchase._source==="supplier" && purchase.supplier_details){
+        if(matchDate && !purchase.supplier_details.fecha_pago) purchase.supplier_details.fecha_pago=matchDate;
+        purchase.supplier_details.estado_pago="PAGADA";
+      }
+    });
+  }else if(inv && State.purch.includes(inv)){
+    inv.status="conciliado";
+    if(matchDate && !inv.paid_date) inv.paid_date=matchDate;
+    if(matchDate && !inv.supplier_paid_date) inv.supplier_paid_date=matchDate;
+    inv.supplier_payment_status="PAGADA";
+    if(inv._source==="supplier" && inv.supplier_details){
+      if(matchDate && !inv.supplier_details.fecha_pago) inv.supplier_details.fecha_pago=matchDate;
+      inv.supplier_details.estado_pago="PAGADA";
+    }
+  }
+  if(inv && State.sales.includes(inv)){
+    inv.status="paid";
+    if(matchDate && !inv.paid_date) inv.paid_date=matchDate;
+  }
+}
+function findInvoiceByNumber(no){
+  if(!no) return null;
+  return State.purch.find(p=>p.invoice_no===no) || State.sales.find(s=>s.invoice_no===no);
+}
 function autoRecon(){
   const list=[];
+  const seen=new Map();
+  const dcChecks=new Map();
   const w=State.cfg.reconDays;
   const box=$("#bSug");
   if(!box) return;
@@ -1113,43 +1765,199 @@ function autoRecon(){
     resetReconSuggestions('No bank movements yet. Import or add transactions to see suggestions.');
     return;
   }
-  // 1) confirm existing references
+  const bankIndex=new Map(); State.bank.forEach((b,i)=>bankIndex.set(b,i));
+  const purchases=State.purch.map(p=>({
+    rec:p,
+    key:invoiceMatchKey(p),
+    names:supplierNameVariants(p),
+    amount:Math.abs(invoiceAmountValue(p)),
+    date:p.date||""
+  }));
+  const sales=State.sales.map(s=>({
+    rec:s,
+    key:invoiceMatchKey(s),
+    names:supplierNameVariants(s),
+    amount:Math.abs(invoiceAmountValue(s)),
+    date:s.date||""
+  }));
+  const purchaseByInvoiceKey=new Map();
+  const purchaseByFuzzyKey=new Map();
+  State.purch.forEach(p=>{
+    const keys=[
+      invoiceIdentifier(p),
+      p.invoice_no,
+      p.numero_factura,
+      p.dc,
+      p.supplier_details?.numero_factura,
+      p.supplier_details?.dc
+    ];
+    keys.forEach(val=>{
+      if(!val) return;
+      const key=invKey(val);
+      if(key){
+        if(!purchaseByInvoiceKey.has(key)) purchaseByInvoiceKey.set(key,[]);
+        purchaseByInvoiceKey.get(key).push(p);
+      }
+      const fuzzy=normalizeMatchKey(val);
+      if(fuzzy){
+        if(!purchaseByFuzzyKey.has(fuzzy)) purchaseByFuzzyKey.set(fuzzy,[]);
+        purchaseByFuzzyKey.get(fuzzy).push(p);
+      }
+    });
+  });
+  const supplierByDcKey=new Map();
+  const supplierByFuzzyKey=new Map();
+  State.suppliers.forEach(row=>{
+    const key=invKey(row.dc);
+    if(key){
+      if(!supplierByDcKey.has(key)) supplierByDcKey.set(key,[]);
+      supplierByDcKey.get(key).push(row);
+    }
+    const fuzzy=normalizeMatchKey(row.dc);
+    if(fuzzy){
+      if(!supplierByFuzzyKey.has(fuzzy)) supplierByFuzzyKey.set(fuzzy,[]);
+      supplierByFuzzyKey.get(fuzzy).push(row);
+    }
+  });
+  const addSuggestion=(bank,targetsLike,score,method,opts={})=>{
+    const bankId=bankIndex.get(bank);
+    if(bankId==null) return;
+    const targets=(Array.isArray(targetsLike)?targetsLike:[targetsLike]).filter(Boolean);
+    if(!targets.length) return;
+    const targetKeys=targets.map(rec=>suggestionTargetKey(rec)).sort().join("+");
+    const supplierKeys=targets.map(rec=>normalizeMatchKey([rec?.supplier,rec?.razon_social,rec?.sociedad,rec?.customer].find(Boolean)||"")||"").sort().join("|");
+    const groupKey=opts.group||method;
+    const key=`${bankId}|${groupKey}|${targetKeys}|${supplierKeys}`;
+    const total=opts.total ?? targets.reduce((sum,rec)=>sum+Math.abs(invoiceAmountValue(rec)),0);
+    const existing=seen.get(key);
+    if(existing){
+      if(existing.score>=score) return;
+      existing.score=score;
+      existing.method=method;
+      existing.targets=targets;
+      existing.total=total;
+      existing.context=opts.context||existing.context||null;
+      existing.headline=opts.headline||existing.headline||null;
+      return;
+    }
+    const suggestion={bank,targets,score,method,total,context:opts.context||null,headline:opts.headline||null};
+    seen.set(key,suggestion);
+    list.push(suggestion);
+  };
   for(const b of State.bank){
+    const dcCheck=bankDcReconciliationCheck(b, supplierByDcKey, supplierByFuzzyKey, purchaseByInvoiceKey, purchaseByFuzzyKey);
+    if(dcCheck) dcChecks.set(b, dcCheck);
     if((b.match_status||"").toLowerCase()==="matched") continue;
+    const conceptTxt=bankConceptText(b);
+    const conceptKey=bankConceptKey(b);
+    const bankAmt=Math.abs(num(b.amount));
+    const bankDate=bankPrimaryDate(b);
     if(b.invoice_no){
-      const inv= State.sales.find(s=>s.invoice_no===b.invoice_no) || State.purch.find(p=>p.invoice_no===b.invoice_no);
-      if(inv) list.push({bank:b,inv,score:200,label:`Confirm ${b.invoice_no} (${fmt.format(num(inv.amount))})`});
-    }else{
-      const invNo=guessInvFromText(b.description||""); if(invNo){
-        const inv= State.sales.find(s=>s.invoice_no===invNo) || State.purch.find(p=>p.invoice_no===invNo);
-        if(inv) list.push({bank:b,inv,score:180,label:`Link by text ${invNo} (${fmt.format(num(inv.amount))})`});
+      const inv=findInvoiceByNumber(b.invoice_no);
+      if(inv) addSuggestion(b,inv,240,'FACTURA reference in bank row');
+    }
+    if(!b.invoice_no){
+      const guess=guessInvFromText(`${b.description||""} ${b.concept||""} ${b.details||""}`.trim());
+      if(guess){
+        const inv=findInvoiceByNumber(guess);
+        if(inv) addSuggestion(b,inv,210,'Invoice detected in description');
       }
     }
-  }
-  // 2) exact amount within date window
-  for(const b of State.bank.filter(x=>!x.invoice_no)){
-    const col = (b.type==="credit")? State.sales : State.purch;
-    for(const inv of col){
-      if(Math.abs(Math.abs(num(b.amount)) - Math.abs(num(inv.amount))) < 0.01){
-        const days=Math.abs((new Date(b.date)-new Date(inv.date))/(1000*3600*24));
-        if(days <= w) list.push({bank:b,inv,score:120-days,label:`Match amt ${fmt.format(inv.amount)} • ${inv.invoice_no}`});
+    if(dcCheck && dcCheck.purchases && dcCheck.purchases.length){
+      const refsDisplay=dcCheck.refs.map(ref=>ref.raw).join(" + ");
+      const amountPieces=dcCheck.purchases.map(rec=>fmt.format(Math.abs(invoiceAmountValue(rec))));
+      const headlineParts=[refsDisplay];
+      if(amountPieces.length){
+        headlineParts.push(`${amountPieces.join(" + ")} = ${fmt.format(dcCheck.total)}`);
+      }
+      const headline=headlineParts.filter(Boolean).join(" • ");
+      const dcGroupKeys=dcCheck.refs.map(ref=>ref.key||normalizeMatchKey(ref.raw)||ref.raw).filter(Boolean).sort().join('+');
+      addSuggestion(b, dcCheck.purchases, 235, 'FACTURA DC match', {
+        group:`dc:${dcGroupKeys}`,
+        context:{refsDisplay, amountPieces, dcTotal:dcCheck.total},
+        headline
+      });
+    }
+    const pool=b.type==="credit"?sales:purchases;
+    if(conceptKey){
+      for(const cand of pool){
+        if(!cand.key) continue;
+        if(conceptKey.includes(cand.key)){
+          addSuggestion(b,cand.rec,200,'Invoice reference in concept');
+        }
+      }
+    }
+    if(bankAmt>0){
+      for(const cand of pool){
+        if(!cand.amount) continue;
+        if(Math.abs(bankAmt - Math.abs(cand.amount)) < 0.01){
+          const invDate=cand.date;
+          const days=(bankDate && invDate)?Math.abs((new Date(bankDate)-new Date(invDate))/(1000*3600*24)):null;
+          if(days!=null && days>w) continue;
+          const supplierHit=cand.names.some(name=>name && conceptTxt.includes(name));
+          const invoiceHit=cand.key && conceptKey.includes(cand.key);
+          const method=supplierHit
+            ? 'Supplier name + amount match'
+            : invoiceHit
+              ? 'Invoice + amount match'
+              : `Amount match (±${w} days)`;
+          const scoreBase=150 + (supplierHit?40:invoiceHit?20:0);
+          const score=scoreBase - (Number.isFinite(days)?days:0);
+          addSuggestion(b,cand.rec,score,method);
+        }
       }
     }
   }
   list.sort((a,b)=>b.score-a.score);
+  const warningsRendered=new WeakSet();
+  const renderWarningForBank=bank=>{
+    const info=dcChecks.get(bank);
+    if(!info || !info.warningMessage || warningsRendered.has(bank)) return;
+    warningsRendered.add(bank);
+    box.insertAdjacentHTML("beforeend", `<div class="dang">${htmlEsc(info.warningMessage)}</div>`);
+  };
   box.innerHTML="";
-  if(!list.length){
+  const top=list.slice(0,50);
+  if(!top.length && ![...dcChecks.values()].some(info=>info && info.warningMessage)){
     resetReconSuggestions('No suggestions right now. Adjust dates or load more bank data.');
     return;
   }
-  list.slice(0,50).forEach((s,i)=> box.insertAdjacentHTML("beforeend",
-    `<div class="grp" style="justify-content:space-between">
-      <div><b>${s.label}</b><div class="tiny mono">${s.bank.date} • ${fmt.format(num(s.bank.amount))} • ${s.bank.type}</div></div>
-      <button class="btn" data-i="${i}" id="ap${i}">Apply</button>
-    </div>`));
-  list.slice(0,50).forEach((s,i)=> $("#ap"+i).onclick=()=>{
-    s.bank.invoice_no=s.inv.invoice_no; s.bank.match_status="matched"; render.bank(); autoRecon(); $("#env").textContent="Reconciled (unsaved)";
+  if(!top.length){
+    dcChecks.forEach((info,bank)=>renderWarningForBank(bank));
+  }
+  top.forEach((s,i)=>{
+    renderWarningForBank(s.bank);
+    const headline=htmlEsc(describeSuggestionHeadline(s));
+    const detailLines=s.targets.length>1
+      ? s.targets.map(rec=>`<div class="tiny mono">${htmlEsc(describeSuggestionTarget(rec))}</div>`).join("")
+      : "";
+    const amountText=formatBankMoney(s.bank.amount, s.bank.amount_display) || fmt.format(num(s.bank.amount));
+    const infoParts=[bankPrimaryDate(s.bank)||"—", amountText, s.bank.type||"", s.bank.concept||s.bank.details||s.bank.description||""].filter(Boolean);
+    const infoText=infoParts.length?htmlEsc(infoParts.join(" • ")):"";
+    box.insertAdjacentHTML("beforeend",
+      `<div class="grp" style="justify-content:space-between">
+        <div><b>${headline}</b>
+          <div class="tiny">Method: ${htmlEsc(s.method)}</div>
+          ${infoText?`<div class="tiny mono">${infoText}</div>`:""}
+          ${detailLines}
+        </div>
+        <button class="btn" data-i="${i}" id="ap${i}">Apply</button>
+      </div>`);
   });
+  top.forEach((s,i)=> $("#ap"+i).onclick=()=>{
+    const primaryTarget=s.targets[0]||null;
+    const invId=primaryTarget?invoiceIdentifier(primaryTarget):null;
+    if(invId) s.bank.invoice_no=invId;
+    else if(primaryTarget && primaryTarget.invoice_no) s.bank.invoice_no=primaryTarget.invoice_no;
+    s.bank.match_status="matched";
+    const purchaseTargets=s.targets.filter(rec=>State.purch.includes(rec));
+    applyReconciliationMatch(s.bank, primaryTarget, purchaseTargets);
+    refreshAll();
+    autoRecon();
+    saveLS();
+    $("#env").textContent="Reconciled (saved)";
+  });
+  dcChecks.forEach((info,bank)=>renderWarningForBank(bank));
 }
 
 /* ===== Reports ===== */
@@ -1333,6 +2141,17 @@ $("#supClear").onclick=()=>{
     syncPurchFromSuppliers();
     refreshAll();
     $("#env").textContent="Supplier data cleared";
+  }
+};
+$("#bankFile").onchange=e=>{ const f=e.target.files?.[0]; if(f){ importBankExcel(f); e.target.value=""; } };
+$("#bankClear").onclick=()=>{
+  const hasImported=State.bank.some(b=>b._source===BANK_IMPORT_SOURCE);
+  if(!hasImported){ alert("No imported bank transactions to clear."); return; }
+  if(confirm("Clear imported bank transactions?")){
+    State.bank=State.bank.filter(b=>b._source!==BANK_IMPORT_SOURCE);
+    State.sel.bank=null;
+    refreshAll();
+    $("#env").textContent="Imported bank data cleared";
   }
 };
 
