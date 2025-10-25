@@ -330,6 +330,17 @@ tbody tr:hover{background:var(--row-hover)}
             <tbody></tbody>
           </table>
         </div>
+        <div class="bar" style="margin-top:1rem">
+          <div class="grp"><div class="tiny">Import bank movements (.xlsx)</div><input type="file" id="bankFile" accept=".xlsx,.xls,.csv"></div>
+          <div class="grp"><button class="btn pri" id="bankTemplate">Download template</button><button class="btn" id="bankClear">Clear imported</button></div>
+          <span class="tiny right">Imported rows: <span id="bankCount">0</span></span>
+        </div>
+        <div class="wrap" style="margin-top:1rem">
+          <table id="bankImpTbl">
+            <thead><tr id="bankImpHead"></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
       </section>
     </main>
   </div>
@@ -590,6 +601,103 @@ function applySupplierRows(rows){
   $("#env").textContent="Supplier invoices imported (unsaved)";
 }
 
+function normalizeHeaderKey(str){
+  return String(str??"").toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g,"")
+    .replace(/[^a-z0-9]+/g,"");
+}
+
+function normalizeBankImportRow(row){
+  if(!row) return null;
+  const map={};
+  for(const key of Object.keys(row)){
+    const norm=normalizeHeaderKey(key);
+    if(norm && !(norm in map)) map[norm]=row[key];
+  }
+  const obj={};
+  let hasData=false;
+  for(const col of BANK_IMPORT_COLUMNS){
+    const normKey=normalizeHeaderKey(col.header);
+    let raw=row?.[col.header];
+    if((raw==null || raw==="") && normKey && Object.prototype.hasOwnProperty.call(map,normKey)){
+      raw=map[normKey];
+    }
+    let val=raw;
+    if(col.type==="date"){
+      val=normalizeExcelDate(raw);
+    }else if(col.type==="currency"||col.type==="number"){
+      const str=String(raw??"").trim();
+      if(str){
+        const n=num(str);
+        val=Number.isFinite(n)?n:str;
+      }else val="";
+    }else{
+      val=String(raw??"").trim();
+    }
+    if(val!=="" && val!=null) hasData=true;
+    obj[col.key]=val;
+  }
+  if(!hasData) return null;
+  if(!obj.date && obj.value_date) obj.date=obj.value_date;
+  if(obj.value_date==="" && obj.date) obj.value_date=obj.date;
+  const amt=num(obj.amount);
+  obj.amount=Number.isFinite(amt)?amt:0;
+  if(obj.balance!=="" && obj.balance!=null){
+    const bal=num(obj.balance);
+    if(Number.isFinite(bal)) obj.balance=bal;
+  }
+  obj.description=String(obj.description??"").trim();
+  obj.invoice_no=String(obj.invoice_no??"").trim();
+  obj.breakdown=String(obj.breakdown??"").trim();
+  obj.type=obj.amount>=0?"credit":"debit";
+  obj.match_status="unmatched";
+  return obj;
+}
+
+function bankImportCellText(col,val){
+  if(val==null||val==="") return "";
+  if(col.type==="currency"){
+    const n=typeof val==="number"?val:num(val);
+    return Number.isFinite(n)?fmt.format(n):String(val);
+  }
+  if(col.type==="number"){
+    const n=typeof val==="number"?val:num(val);
+    return Number.isFinite(n)?String(n):String(val);
+  }
+  return String(val);
+}
+
+function buildBankImportHeader(){
+  const head=$("#bankImpHead");
+  if(head && !head.dataset.ready){
+    head.innerHTML=BANK_IMPORT_COLUMNS.map(col=>`<th>${col.header}</th>`).join("");
+    head.dataset.ready="1";
+  }
+}
+
+function renderBankImportTable(){
+  buildBankImportHeader();
+  const tb=$("#bankImpTbl tbody");
+  if(!tb) return;
+  if(!State.bank.length){
+    tb.innerHTML=`<tr><td colspan="${BANK_IMPORT_COLUMNS.length}" class="tiny">No bank movements imported yet.</td></tr>`;
+  }else{
+    tb.innerHTML=State.bank.map(row=>`<tr>${BANK_IMPORT_COLUMNS.map(col=>{
+      const cls=(col.type==="currency"||col.type==="number"||col.type==="date")?" class=\"mono\"":"";
+      return `<td${cls}>${bankImportCellText(col,row[col.key])}</td>`;
+    }).join("")}</tr>`).join("");
+  }
+  const cnt=$("#bankCount"); if(cnt) cnt.textContent=State.bank.length;
+}
+
+function applyBankRows(rows){
+  const parsedRows=rows.map(normalizeBankImportRow).filter(Boolean);
+  State.bank=parsedRows;
+  State.sel.bank=null;
+  refreshAll({forceReports:true});
+  $("#env").textContent="Bank transactions imported (unsaved)";
+}
+
 function parseCSVLine(line){
   const res=[]; let field=""; let inQuotes=false;
   for(let i=0;i<line.length;i++){
@@ -651,9 +759,61 @@ async function importSupplierExcel(file){
   }
 }
 
+async function importBankExcel(file){
+  const name=file.name.toLowerCase();
+  if(name.endsWith(".csv")){
+    const fr=new FileReader();
+    fr.onload=()=>{
+      const text=String(fr.result||"").replace(/^\uFEFF/,"");
+      const lines=text.split(/\r?\n/).filter((l,i,arr)=>!(i===arr.length-1 && l.trim()===""));
+      if(!lines.length) return applyBankRows([]);
+      const headers=parseCSVLine(lines[0]);
+      const rows=[];
+      for(let i=1;i<lines.length;i++){
+        const line=lines[i];
+        if(!line.trim()) continue;
+        const cells=parseCSVLine(line);
+        const row={};
+        headers.forEach((h,idx)=>{ row[h]=cells[idx]??""; });
+        rows.push(row);
+      }
+      applyBankRows(rows);
+    };
+    fr.readAsText(file);
+  }else{
+    try{
+      await ensureXLSX();
+    }catch(err){
+      console.error(err);
+      alert("Failed to load Excel parser: "+err.message);
+      return;
+    }
+    const fr=new FileReader();
+    fr.onload=()=>{
+      try{
+        const data=new Uint8Array(fr.result);
+        const wb=XLSX.read(data,{type:"array",cellDates:true});
+        const sheet=wb.Sheets[wb.SheetNames[0]];
+        if(!sheet){ alert("No sheets found in workbook"); return; }
+        const rows=XLSX.utils.sheet_to_json(sheet,{defval:"",raw:true,cellDates:true});
+        applyBankRows(rows);
+      }catch(err){
+        console.error(err);
+        alert("Failed to parse Excel file: "+err.message);
+      }
+    };
+    fr.readAsArrayBuffer(file);
+  }
+}
+
 function downloadSupplierTemplate(){
   const head=SUPPLIER_COLUMNS.map(col=>`"${col.header}"`).join(",");
   download("supplier_invoices_template.csv", head+"\n", "text/csv");
+}
+
+function downloadBankTemplate(){
+  const head=BANK_IMPORT_COLUMNS.map(col=>`"${col.header}"`).join(",");
+  download("bank_movements_template.csv", head+"\n", "text/csv");
 }
 
 /* ===== Filters ===== */
@@ -742,6 +902,16 @@ const SUPPLIER_COLUMNS = [
   {header:"Forma de Pago",key:"forma_pago",type:"text"},
   {header:"Fecha de Pago",key:"fecha_pago",type:"date"},
   {header:"PMP",key:"pmp",type:"number"}
+];
+
+const BANK_IMPORT_COLUMNS = [
+  {header:"F. ejecución",key:"date",type:"date"},
+  {header:"F. valor",key:"value_date",type:"date"},
+  {header:"Concepto",key:"description",type:"text"},
+  {header:"Importe",key:"amount",type:"currency"},
+  {header:"Saldo",key:"balance",type:"currency"},
+  {header:"FACTURA",key:"invoice_no",type:"text"},
+  {header:"Desglose",key:"breakdown",type:"text"},
 ];
 
 const PURCHASE_COLUMNS = (()=>{
@@ -987,7 +1157,7 @@ $("#mSave").onclick=()=>{
 };
 
 /* ===== Rendering ===== */
-function renderAll(){ renderKPIs(); renderAging(); render.sales(); render.purch(); render.bank(); render.suppliers(); renderAudit(); }
+function renderAll(){ renderKPIs(); renderAging(); render.sales(); render.purch(); render.bank(); render.suppliers(); renderBankImportTable(); renderAudit(); }
 
 function renderKPIs(){
   const ym=new Date().toISOString().slice(0,7);
@@ -1351,6 +1521,17 @@ $("#supClear").onclick=()=>{
     syncPurchFromSuppliers();
     refreshAll();
     $("#env").textContent="Supplier data cleared";
+  }
+};
+$("#bankFile").onchange=e=>{ const f=e.target.files?.[0]; if(f){ importBankExcel(f); e.target.value=""; } };
+$("#bankTemplate").onclick=downloadBankTemplate;
+$("#bankClear").onclick=()=>{
+  if(!State.bank.length) return;
+  if(confirm("Clear imported bank movements?")){
+    State.bank=[];
+    State.sel.bank=null;
+    refreshAll({forceReports:true});
+    $("#env").textContent="Bank data cleared";
   }
 };
 
