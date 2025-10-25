@@ -197,7 +197,9 @@ tbody tr:hover{background:var(--row-hover)}
                 <th data-k="supplier">Supplier</th>
                 <th data-k="amount" class="mono">Amount</th>
                 <th data-k="status">Status</th>
+                <th data-k="supplier_payment_status">Supplier Payment</th>
                 <th data-k="paid_date">Paid Date</th>
+                <th data-k="supplier_paid_date">Supplier Paid Date</th>
                 <th data-k="due_date">Due Date</th>
                 <th data-k="departamento">Department</th>
                 <th data-k="categoria">Category</th>
@@ -253,7 +255,7 @@ tbody tr:hover{background:var(--row-hover)}
           </div>
           <div class="panel">
             <div class="title" style="font-size:1rem">Suggested Matches</div>
-            <div class="tiny">Click to apply</div>
+            <div class="tiny">Run Auto-Reconcile to populate matches, then click Apply.</div>
             <div id="bSug" class="grid" style="grid-template-columns:1fr;gap:.6rem;margin-top:.5rem"></div>
           </div>
         </div>
@@ -357,6 +359,7 @@ const today = ()=>iso(new Date());
 const by=(k,dir=1)=>(a,b)=>a[k]===b[k]?0:(a[k]>b[k]?dir:-dir);
 const csvCell = s=>`"${String(s??"").replace(/"/g,'""')}"`;
 const deb=(fn,ms=160)=>{let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>fn(...a),ms);}};
+const invKey=v=>(v??"").toString().trim().toUpperCase();
 const XLSX_SRC = "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js";
 let xlsxLoader=null;
 function ensureXLSX(){
@@ -461,7 +464,7 @@ function stamp(){ $("#lastRef").textContent=new Date().toLocaleString(); $("#yr"
 function setActive(tab){ $$("#nav button").forEach(b=>b.classList.toggle("active",b.dataset.tab===tab)); $$("main > section").forEach(s=>s.classList.toggle("hidden", s.id!==tab)); }
 function refreshAll({forceReports=false}={}){
   renderAll();
-  autoRecon();
+  resetReconSuggestions();
   if(forceReports || !$("#reports").classList.contains("hidden")) runReport();
   stamp();
 }
@@ -652,23 +655,23 @@ function downloadSupplierTemplate(){
 /* ===== Filters ===== */
 const filtered = {
   sales:()=> State.sales.filter(r=>{
-    const f=State.filter.sales, q=f.q.toLowerCase();
+    const f=State.filter.sales, q=(f.q||"").toLowerCase();
     const inR=(!f.from||r.date>=f.from)&&(!f.to||r.date<=f.to);
     const st = !f.st||r.status===f.st;
     const qok = !q||[r.invoice_no,r.customer,r.notes].join(" ").toLowerCase().includes(q);
     return inR&&st&&qok;
   }).sort(by(State.sort.sales.k, State.sort.sales.d)),
   purch:()=> State.purch.filter(r=>{
-    const f=State.filter.purch,q=f.q.toLowerCase();
+    const f=State.filter.purch,q=(f.q||"").toLowerCase();
     const inR=(!f.from||r.date>=f.from)&&(!f.to||r.date<=f.to);
     const st=!f.st||r.status===f.st;
-    const haystack=[r.invoice_no,r.supplier,r.departamento,r.categoria,r.forma_pago,r.codigo_er,r.payment_auth,r.opex_capex,r.vat_number]
+    const haystack=[r.invoice_no,r.supplier,r.departamento,r.categoria,r.forma_pago,r.codigo_er,r.payment_auth,r.opex_capex,r.vat_number,r.supplier_payment_status,r.supplier_paid_date]
       .map(v=>v??"").join(" ");
     const qok=!q||haystack.toLowerCase().includes(q);
     return inR&&st&&qok;
   }).sort(by(State.sort.purch.k, State.sort.purch.d)),
   bank:()=> State.bank.filter(r=>{
-    const f=State.filter.bank,q=f.q.toLowerCase();
+    const f=State.filter.bank,q=(f.q||"").toLowerCase();
     const inR=(!f.from||r.date>=f.from)&&(!f.to||r.date<=f.to);
     const ty=!f.type||r.type===f.type;
     const qok=!q||[r.description,r.invoice_no,r.amount].join(" ").toLowerCase().includes(q);
@@ -745,17 +748,42 @@ function supplierStatusToPurchStatus(raw){
   return "unpaid";
 }
 
-function mapSupplierToPurchase(row){
+function mapSupplierToPurchase(row, prev){
   const amountTotal=num(row.importe_total);
   const baseAmount=num(row.base_imponible);
   const retentionAmount=num(row.importe_retencion);
+  const invoiceNo=row.numero_factura||row.dc||"";
+  const key=invKey(invoiceNo);
+  let bankDerivedStatus=null;
+  let bankDerivedDate="";
+  if(key){
+    for(const b of State.bank){
+      if(invKey(b.invoice_no)===key){
+        const ms=(b.match_status||"").toLowerCase();
+        if(ms==="matched"){ bankDerivedStatus="paid"; bankDerivedDate=b.date||bankDerivedDate; break; }
+        if(ms==="partial" && bankDerivedStatus!=="paid"){ bankDerivedStatus="partial"; bankDerivedDate=b.date||bankDerivedDate; }
+      }
+    }
+  }
+  let status = (prev && prev._source!=="supplier")?prev.status:undefined;
+  let paidDate = (prev && prev._source!=="supplier")?prev.paid_date:undefined;
+  if(bankDerivedStatus){
+    status = bankDerivedStatus;
+    if(!paidDate) paidDate = bankDerivedDate;
+  }
+  if(!status) status = "unpaid";
+  if(!paidDate) paidDate = "";
+  const supplierStatus=supplierStatusToPurchStatus(row.estado_pago);
+  const supplierPaidDate=row.fecha_pago||"";
   const purchase={
-    invoice_no:row.numero_factura||row.dc||"",
+    invoice_no:invoiceNo,
     date:row.fecha_factura||"",
     supplier:row.razon_social||row.sociedad||"",
     amount:Number.isFinite(amountTotal)?amountTotal:Number.isFinite(baseAmount)?baseAmount:0,
-    status:supplierStatusToPurchStatus(row.estado_pago),
-    paid_date:row.fecha_pago||"",
+    status,
+    supplier_payment_status:supplierStatus,
+    paid_date:paidDate,
+    supplier_paid_date:supplierPaidDate,
     due_date:row.fecha_vencimiento||row.fecha_tope_pago||"",
     payment_deadline:row.fecha_tope_pago||"",
     retention_amount:Number.isFinite(retentionAmount)?retentionAmount:0,
@@ -780,22 +808,21 @@ function mapSupplierToPurchase(row){
 }
 
 function syncPurchFromSuppliers(){
-  const keyFromInv=v=>(v||"").toString().trim().toUpperCase();
   const existingByInv=new Map();
   State.purch.forEach(p=>{
-    const key=keyFromInv(p.invoice_no);
+    const key=invKey(p.invoice_no);
     if(key) existingByInv.set(key,p);
   });
-  const supNos=new Set(State.suppliers.map(r=>keyFromInv(r.numero_factura||r.dc)));
+  const supNos=new Set(State.suppliers.map(r=>invKey(r.numero_factura||r.dc)));
   const manual=State.purch.filter(p=>{
     if(p._source==="supplier") return false;
-    const inv=keyFromInv(p.invoice_no);
+    const inv=invKey(p.invoice_no);
     return !supNos.has(inv);
   });
   const imported=State.suppliers.map(row=>{
-    const purchase=mapSupplierToPurchase(row);
-    const key=keyFromInv(purchase.invoice_no);
+    const key=invKey(row.numero_factura||row.dc);
     const prev=key?existingByInv.get(key):null;
+    const purchase=mapSupplierToPurchase(row, prev);
     if(prev){
       ["pdf_link","notes","payment_auth"].forEach(field=>{
         if(prev[field] && !purchase[field]) purchase[field]=prev[field];
@@ -925,7 +952,9 @@ const render = {
       <td>${r.invoice_no||""}</td><td>${r.date||""}</td><td>${r.supplier||""}</td>
       <td class="mono">${fmt.format(num(r.amount))}</td>
       <td><span class="status ${r.status==="paid"?"ok":r.status==="unpaid"?"bad":"warn"}">${r.status||"—"}</span></td>
+      <td>${r.supplier_payment_status?`<span class="status ${r.supplier_payment_status==="paid"?"ok":r.supplier_payment_status==="unpaid"?"bad":"warn"}">${r.supplier_payment_status}</span>`:"—"}</td>
       <td>${r.paid_date||"—"}</td>
+      <td>${r.supplier_paid_date||"—"}</td>
       <td>${r.due_date||r.payment_deadline||"—"}</td>
       <td>${r.departamento||"—"}</td>
       <td>${r.categoria||"—"}</td>
@@ -976,11 +1005,22 @@ function renderAudit(){
 
 /* ===== Reconciliation ===== */
 function guessInvFromText(t){ const m=String(t).match(/(INV-\d+|BILL-\d+)/i); return m?m[1].toUpperCase():""; }
+function resetReconSuggestions(msg='Click "Auto-Reconcile" to generate suggestions.'){
+  const box=$("#bSug");
+  if(box) box.innerHTML=`<div class="note">${msg}</div>`;
+}
 function autoRecon(){
   const list=[];
   const w=State.cfg.reconDays;
+  const box=$("#bSug");
+  if(!box) return;
+  if(!State.bank.length){
+    resetReconSuggestions('No bank movements yet. Import or add transactions to see suggestions.');
+    return;
+  }
   // 1) confirm existing references
   for(const b of State.bank){
+    if((b.match_status||"").toLowerCase()==="matched") continue;
     if(b.invoice_no){
       const inv= State.sales.find(s=>s.invoice_no===b.invoice_no) || State.purch.find(p=>p.invoice_no===b.invoice_no);
       if(inv) list.push({bank:b,inv,score:200,label:`Confirm ${b.invoice_no} (${fmt.format(num(inv.amount))})`});
@@ -1002,8 +1042,11 @@ function autoRecon(){
     }
   }
   list.sort((a,b)=>b.score-a.score);
-  const box=$("#bSug"); box.innerHTML="";
-  if(!list.length){ box.innerHTML=`<div class="note">No suggestions.</div>`; return; }
+  box.innerHTML="";
+  if(!list.length){
+    resetReconSuggestions('No suggestions right now. Adjust dates or load more bank data.');
+    return;
+  }
   list.slice(0,50).forEach((s,i)=> box.insertAdjacentHTML("beforeend",
     `<div class="grp" style="justify-content:space-between">
       <div><b>${s.label}</b><div class="tiny mono">${s.bank.date} • ${fmt.format(num(s.bank.amount))} • ${s.bank.type}</div></div>
@@ -1076,12 +1119,27 @@ function toggleTheme(){
 }
 
 /* ===== Events ===== */
-$("#nav").addEventListener("click",e=>{ if(e.target.tagName!=="BUTTON")return; setActive(e.target.dataset.tab); if(e.target.dataset.tab==="bank") autoRecon(); });
-["sQ","sFrom","sTo"].forEach(id=>$("#"+id).addEventListener("input", deb(()=>{ State.filter.sales.q=$("#sQ").value.toLowerCase(); State.filter.sales.from=$("#sFrom").value; State.filter.sales.to=$("#sTo").value; render.sales(); })));
+$("#nav").addEventListener("click",e=>{ if(e.target.tagName!=="BUTTON")return; setActive(e.target.dataset.tab); });
+["sQ","sFrom","sTo"].forEach(id=>$("#"+id).addEventListener("input", deb(()=>{
+  State.filter.sales.q=$("#sQ").value.trim().toLowerCase();
+  State.filter.sales.from=$("#sFrom").value;
+  State.filter.sales.to=$("#sTo").value;
+  render.sales();
+})));
 $("#sSt").onchange=()=>{ State.filter.sales.st=$("#sSt").value; render.sales(); };
-["pQ","pFrom","pTo"].forEach(id=>$("#"+id).addEventListener("input", deb(()=>{ State.filter.purch.q=$("#pQ").value.toLowerCase(); State.filter.purch.from=$("#pFrom").value; State.filter.purch.to=$("#pTo").value; render.purch(); })));
+["pQ","pFrom","pTo"].forEach(id=>$("#"+id).addEventListener("input", deb(()=>{
+  State.filter.purch.q=$("#pQ").value.trim().toLowerCase();
+  State.filter.purch.from=$("#pFrom").value;
+  State.filter.purch.to=$("#pTo").value;
+  render.purch();
+})));
 $("#pSt").onchange=()=>{ State.filter.purch.st=$("#pSt").value; render.purch(); };
-["bQ","bFrom","bTo"].forEach(id=>$("#"+id).addEventListener("input", deb(()=>{ State.filter.bank.q=$("#bQ").value.toLowerCase(); State.filter.bank.from=$("#bFrom").value; State.filter.bank.to=$("#bTo").value; render.bank(); })));
+["bQ","bFrom","bTo"].forEach(id=>$("#"+id).addEventListener("input", deb(()=>{
+  State.filter.bank.q=$("#bQ").value.trim().toLowerCase();
+  State.filter.bank.from=$("#bFrom").value;
+  State.filter.bank.to=$("#bTo").value;
+  render.bank();
+})));
 $("#bType").onchange=()=>{ State.filter.bank.type=$("#bType").value; render.bank(); };
 
 // sorting
@@ -1108,7 +1166,9 @@ $("#pCSV").onclick=()=>{ const rows=filtered.purch(); const hdr=[
   {label:"amount",get:r=>num(r.amount)},
   {label:"base_amount",get:r=>num(r.base_amount)},
   {label:"status",get:r=>r.status},
+  {label:"supplier_payment_status",get:r=>r.supplier_payment_status},
   {label:"paid_date",get:r=>r.paid_date},
+  {label:"supplier_paid_date",get:r=>r.supplier_paid_date},
   {label:"due_date",get:r=>r.due_date},
   {label:"payment_deadline",get:r=>r.payment_deadline},
   {label:"payment_auth",get:r=>r.payment_auth},
@@ -1168,10 +1228,11 @@ function init(){
   loadTheme();
   // Default from LocalStorage or seed
   loadLS();
-  // Prefill date filters to month
-  const d=new Date(); const f=new Date(d.getFullYear(), d.getMonth(), 1);
-  $("#sFrom").value=$("#pFrom").value=$("#bFrom").value=$("#rFrom").value=iso(f);
-  $("#sTo").value=$("#pTo").value=$("#bTo").value=$("#rTo").value=today();
+  // Ensure filters start clear so all records are visible
+  ["sFrom","sTo","pFrom","pTo","bFrom","bTo","rFrom","rTo"].forEach(id=>{
+    const el=$("#"+id);
+    if(el) el.value="";
+  });
   clickSort("sTbl","sales"); clickSort("pTbl","purch"); clickSort("bTbl","bank");
 }
 init();
