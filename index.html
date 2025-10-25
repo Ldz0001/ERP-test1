@@ -324,6 +324,11 @@ tbody tr:hover{background:var(--row-hover)}
           <div class="grp"><button class="btn pri" id="supTemplate">Download template</button><button class="btn" id="supClear">Clear imported</button></div>
           <span class="tiny right">Imported rows: <span id="supCount">0</span></span>
         </div>
+        <div class="bar" style="margin-top:1rem">
+          <div class="grp"><div class="tiny">Import bank movements (.xlsx)</div><input type="file" id="bankFile" accept=".xlsx,.xls,.csv"></div>
+          <div class="grp"><button class="btn" id="bankClear">Clear imported bank</button></div>
+          <span class="tiny right">Imported bank rows: <span id="bankCount">0</span></span>
+        </div>
         <div class="wrap" style="margin-top:1rem">
           <table id="supTbl">
             <thead><tr id="supHead"></tr></thead>
@@ -375,6 +380,17 @@ function ensureXLSX(){
   }).catch(err=>{ xlsxLoader=null; throw err; });
   return xlsxLoader;
 }
+
+const BANK_IMPORT_SOURCE = "bank_import";
+const BANK_HEADER_MAP = {
+  f_ejecucion:"execution_date",
+  f_valor:"value_date",
+  concepto:"concept",
+  importe:"amount",
+  saldo:"balance",
+  factura:"invoice",
+  desglose:"details"
+};
 
 /* ===== State ===== */
 const LS_KEYS = {sales:"erp_sales",purch:"erp_purch",bank:"erp_bank",suppliers:"erp_suppliers"};
@@ -521,6 +537,66 @@ function normalizeSupplierRow(row){
   return hasData?obj:null;
 }
 
+function normalizeBankHeader(key){
+  if(!key) return "";
+  return String(key)
+    .normalize("NFD").replace(/[\u0300-\u036f]/g,"")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g,"_")
+    .replace(/^_|_$/g,"");
+}
+
+function parseMaybeNumber(val){
+  if(val==null || val==="") return null;
+  if(typeof val==="number") return Number.isFinite(val)?val:null;
+  const str=String(val).trim();
+  if(!str) return null;
+  const parsed=num(str);
+  return Number.isFinite(parsed)?parsed:null;
+}
+
+function normalizeBankRow(row){
+  const mapped={};
+  let hasData=false;
+  for(const [key,val] of Object.entries(row||{})){
+    if(key==null) continue;
+    const normKey=normalizeBankHeader(key);
+    if(!normKey) continue;
+    const mappedKey=BANK_HEADER_MAP[normKey]||normKey;
+    mapped[mappedKey]=val;
+    if(val!=null){
+      if(typeof val==="number" && !Number.isNaN(val)) hasData=true;
+      else if(String(val).trim()!="") hasData=true;
+    }
+  }
+  if(!hasData) return null;
+  const executionDate=normalizeExcelDate(mapped.execution_date||"");
+  const valueDate=normalizeExcelDate(mapped.value_date||"");
+  const date=valueDate||executionDate||"";
+  const concept=String(mapped.concept??"").trim();
+  const details=String(mapped.details??"").trim();
+  const description=[concept,details].filter(Boolean).join(" — ") || concept || details || "";
+  const invoice=String(mapped.invoice??mapped.invoice_no??"").trim();
+  const amountVal=parseMaybeNumber(mapped.amount);
+  const balanceVal=parseMaybeNumber(mapped.balance);
+  const amount=amountVal??0;
+  const type=amount>=0?"credit":"debit";
+  return {
+    date,
+    description,
+    amount,
+    type,
+    invoice_no:invoice,
+    match_status:"unmatched",
+    execution_date,
+    value_date,
+    balance:balanceVal??"",
+    concept,
+    details,
+    _source:BANK_IMPORT_SOURCE
+  };
+}
+
 function supplierCellText(col,val){
   if(val==null||val==="") return "";
   if(col.type==="currency"){
@@ -566,6 +642,24 @@ function applySupplierRows(rows){
   syncPurchFromSuppliers();
   refreshAll();
   $("#env").textContent="Supplier invoices imported (unsaved)";
+}
+
+function applyBankImportRows(rows){
+  const normalized=rows.map(normalizeBankRow).filter(Boolean);
+  const manual=State.bank.filter(b=>b._source!==BANK_IMPORT_SOURCE);
+  State.bank=[...manual,...normalized];
+  State.sel.bank=null;
+  refreshAll();
+  $("#env").textContent = normalized.length
+    ? `Bank transactions imported (${normalized.length}) (unsaved)`
+    : "Bank import contained no rows; existing imported entries cleared";
+}
+
+function updateBankImportSummary(){
+  const cnt=$("#bankCount");
+  if(!cnt) return;
+  const imported=State.bank.filter(b=>b._source===BANK_IMPORT_SOURCE).length;
+  cnt.textContent=imported;
 }
 
 function parseCSVLine(line){
@@ -620,6 +714,53 @@ async function importSupplierExcel(file){
         if(!sheet){ alert("No sheets found in workbook"); return; }
         const rows=XLSX.utils.sheet_to_json(sheet,{defval:"",raw:true,cellDates:true});
         applySupplierRows(rows);
+      }catch(err){
+        console.error(err);
+        alert("Failed to parse Excel file: "+err.message);
+      }
+    };
+    fr.readAsArrayBuffer(file);
+  }
+}
+
+async function importBankExcel(file){
+  const name=file.name.toLowerCase();
+  if(name.endsWith(".csv")){
+    const fr=new FileReader();
+    fr.onload=()=>{
+      const text=String(fr.result||"").replace(/^\uFEFF/,"");
+      const lines=text.split(/\r?\n/).filter((l,i,arr)=>!(i===arr.length-1 && l.trim()===""));
+      if(!lines.length) return applyBankImportRows([]);
+      const headers=parseCSVLine(lines[0]);
+      const rows=[];
+      for(let i=1;i<lines.length;i++){
+        const line=lines[i];
+        if(!line.trim()) continue;
+        const cells=parseCSVLine(line);
+        const row={};
+        headers.forEach((h,idx)=>{ row[h]=cells[idx]??""; });
+        rows.push(row);
+      }
+      applyBankImportRows(rows);
+    };
+    fr.readAsText(file);
+  }else{
+    try{
+      await ensureXLSX();
+    }catch(err){
+      console.error(err);
+      alert("Failed to load Excel parser: "+err.message);
+      return;
+    }
+    const fr=new FileReader();
+    fr.onload=()=>{
+      try{
+        const data=new Uint8Array(fr.result);
+        const wb=XLSX.read(data,{type:"array",cellDates:true});
+        const sheet=wb.Sheets[wb.SheetNames[0]];
+        if(!sheet){ alert("No sheets found in workbook"); return; }
+        const rows=XLSX.utils.sheet_to_json(sheet,{defval:"",raw:true,cellDates:true});
+        applyBankImportRows(rows);
       }catch(err){
         console.error(err);
         alert("Failed to parse Excel file: "+err.message);
@@ -1070,6 +1211,7 @@ const render = {
     selectRow(tb,"bank");
     $("#bStats").textContent=`${rows.length} tx • ${fmt.format(rows.reduce((a,b)=>a+num(b.amount),0))}`;
     $("#bOpen").textContent=`Open: ${rows.filter(x=>x.match_status!=="matched").length}`;
+    updateBankImportSummary();
   },
   suppliers: renderSuppliersTable
 };
@@ -1333,6 +1475,17 @@ $("#supClear").onclick=()=>{
     syncPurchFromSuppliers();
     refreshAll();
     $("#env").textContent="Supplier data cleared";
+  }
+};
+$("#bankFile").onchange=e=>{ const f=e.target.files?.[0]; if(f){ importBankExcel(f); e.target.value=""; } };
+$("#bankClear").onclick=()=>{
+  const hasImported=State.bank.some(b=>b._source===BANK_IMPORT_SOURCE);
+  if(!hasImported){ alert("No imported bank transactions to clear."); return; }
+  if(confirm("Clear imported bank transactions?")){
+    State.bank=State.bank.filter(b=>b._source!==BANK_IMPORT_SOURCE);
+    State.sel.bank=null;
+    refreshAll();
+    $("#env").textContent="Imported bank data cleared";
   }
 };
 
