@@ -232,6 +232,11 @@ tbody tr:hover{background:var(--row-hover)}
             <span id="bStats" class="chip">—</span>
           </div>
         </div>
+        <div class="bar">
+          <div class="grp"><div class="tiny">Import bank (.xlsx/.csv)</div><input type="file" id="bankFile" accept=".xlsx,.xls,.csv"></div>
+          <div class="grp"><button class="btn pri" id="bankTemplate">Download template</button><button class="btn" id="bankClear">Clear imported</button></div>
+          <span class="tiny right">Imported rows: <span id="bankCount">0</span></span>
+        </div>
         <div class="grid" style="grid-template-columns:1fr 1fr;gap:1rem">
           <div class="panel">
             <div style="display:flex;align-items:center;gap:.5rem">
@@ -632,6 +637,168 @@ async function importSupplierExcel(file){
 function downloadSupplierTemplate(){
   const head=SUPPLIER_COLUMNS.map(col=>`"${col.header}"`).join(",");
   download("supplier_invoices_template.csv", head+"\n", "text/csv");
+}
+
+const BANK_IMPORT_HEADERS = [
+  {header:"Date",key:"date"},
+  {header:"Description",key:"description"},
+  {header:"Amount",key:"amount"},
+  {header:"Type",key:"type"},
+  {header:"Invoice #",key:"invoice_no"},
+  {header:"Match Status",key:"match_status"},
+];
+
+function normalizeBankImportRow(row){
+  if(!row) return null;
+  const norm={};
+  for(const [key,val] of Object.entries(row)){
+    if(!key) continue;
+    norm[key.trim().toLowerCase()]=val;
+  }
+  const pick=(keys)=>{
+    for(const key of keys){
+      if(Object.prototype.hasOwnProperty.call(norm,key)) return norm[key];
+    }
+    return "";
+  };
+  const parseNumber=(raw)=>{
+    if(raw===null||raw===undefined||raw==="") return null;
+    const n=num(raw);
+    return Number.isFinite(n)?n:null;
+  };
+  const dateRaw=pick(["date","transaction date","value date","fecha","fecha valor"]);
+  const descRaw=pick(["description","details","memo","concepto","concept","narrative","glosa","reference text"]);
+  const amountRaw=parseNumber(pick(["amount","importe","value","monto","importe neto"]));
+  const creditRaw=parseNumber(pick(["credit","credit amount","importe haber","haber","deposit"]));
+  const debitRaw=parseNumber(pick(["debit","debit amount","importe debe","cargo","withdrawal"]));
+  let amount=0;
+  let hasAmount=false;
+  if(amountRaw!=null){ amount=amountRaw; hasAmount=true; }
+  if(creditRaw!=null){ amount=Math.abs(creditRaw); hasAmount=true; }
+  if(debitRaw!=null){ amount=-Math.abs(debitRaw); hasAmount=true; }
+  let typeRaw=String(pick(["type","credit/debit","dr/cr","movement type","sign","tipo"])||"").trim().toLowerCase();
+  let type="";
+  if(["credit","cr","c","haber","deposit","abono"].includes(typeRaw)) type="credit";
+  else if(["debit","dr","d","cargo","withdrawal","cargo banco"].includes(typeRaw)) type="debit";
+  else if(hasAmount) type = amount<0?"debit":"credit";
+  const date=normalizeExcelDate(dateRaw);
+  const description=String(descRaw??"").trim();
+  if(type==="credit") amount=Math.abs(amount);
+  else if(type==="debit") amount=-Math.abs(amount);
+  else type = amount<0?"debit":"credit";
+  const invoice=String(pick(["invoice #","invoice","invoice no","invoice_no","reference","ref","document","documento"])||"").trim();
+  const matchRaw=String(pick(["match status","match","status","reconciled","conciliado"])||"").trim().toLowerCase();
+  let match="";
+  if(["matched","unmatched","partial","unknown"].includes(matchRaw)) match=matchRaw;
+  else if(!matchRaw) match="unmatched";
+  else if(matchRaw.includes("match") && !matchRaw.includes("un")) match="matched";
+  else if(matchRaw.includes("partial")) match="partial";
+  else match="unknown";
+  if(!date && !description && !invoice && !hasAmount) return null;
+  return {
+    date:date||"",
+    description,
+    amount:hasAmount?amount:0,
+    type:(type==="debit"||type==="credit")?type:(amount<0?"debit":"credit"),
+    invoice_no:invoice,
+    match_status:match||"unmatched"
+  };
+}
+
+function bankImportKey(row){
+  const amt=num(row.amount||0);
+  const desc=String(row.description||"").trim().toLowerCase();
+  return `${row.date||""}|${desc}|${amt.toFixed(2)}`;
+}
+
+function applyBankImportRows(rows){
+  const normalized=rows.map(normalizeBankImportRow).filter(Boolean);
+  const manual=State.bank.filter(r=>r._source!=="import");
+  const existing=new Map();
+  State.bank.filter(r=>r._source==="import").forEach(r=>{
+    existing.set(bankImportKey(r), r);
+  });
+  const imported=normalized.map(row=>{
+    const key=bankImportKey(row);
+    const prev=existing.get(key);
+    const rec=Object.assign({}, row);
+    if(prev){
+      if(prev.invoice_no && !rec.invoice_no) rec.invoice_no=prev.invoice_no;
+      if(prev.match_status && (!rec.match_status || rec.match_status==="unmatched" || rec.match_status==="unknown")) rec.match_status=prev.match_status;
+    }
+    if(!rec.match_status) rec.match_status="unmatched";
+    rec._source="import";
+    rec._importKey=key;
+    return rec;
+  });
+  State.bank=[...manual,...imported];
+  State.sel.bank=null;
+  refreshAll();
+  $("#env").textContent="Bank transactions imported (unsaved)";
+}
+
+async function importBankFile(file){
+  const name=file.name.toLowerCase();
+  if(name.endsWith(".csv")){
+    const fr=new FileReader();
+    fr.onload=()=>{
+      const text=String(fr.result||"").replace(/^\uFEFF/,"");
+      const lines=text.split(/\r?\n/).filter((l,i,arr)=>!(i===arr.length-1 && l.trim()===""));
+      if(!lines.length){ applyBankImportRows([]); return; }
+      const headers=parseCSVLine(lines[0]).map(h=>h.trim());
+      const rows=[];
+      for(let i=1;i<lines.length;i++){
+        const line=lines[i];
+        if(!line.trim()) continue;
+        const cells=parseCSVLine(line);
+        const obj={};
+        headers.forEach((h,idx)=>{ obj[h]=cells[idx]??""; });
+        rows.push(obj);
+      }
+      applyBankImportRows(rows);
+    };
+    fr.readAsText(file);
+    return;
+  }
+  try{
+    await ensureXLSX();
+  }catch(err){
+    console.error(err);
+    alert("Failed to load Excel parser: "+err.message);
+    return;
+  }
+  const fr=new FileReader();
+  fr.onload=()=>{
+    try{
+      const data=new Uint8Array(fr.result);
+      const wb=XLSX.read(data,{type:"array",cellDates:true});
+      const sheet=wb.Sheets[wb.SheetNames[0]];
+      if(!sheet){ alert("No sheets found in workbook"); return; }
+      const rows=XLSX.utils.sheet_to_json(sheet,{defval:"",raw:true,cellDates:true});
+      applyBankImportRows(rows);
+    }catch(err){
+      console.error(err);
+      alert("Failed to parse bank file: "+err.message);
+    }
+  };
+  fr.readAsArrayBuffer(file);
+}
+
+function downloadBankTemplate(){
+  const head=BANK_IMPORT_HEADERS.map(col=>`"${col.header}"`).join(",");
+  const sample='"2024-01-05","Payment INV-1001","1000","credit","INV-1001","matched"';
+  download("bank_transactions_template.csv", head+"\n"+sample+"\n", "text/csv");
+}
+
+function clearImportedBank(){
+  const count=State.bank.filter(r=>r._source==="import").length;
+  if(!count){ alert("No imported bank transactions to clear."); return; }
+  if(confirm(`Clear ${count} imported bank transactions?`)){
+    State.bank=State.bank.filter(r=>r._source!=="import");
+    State.sel.bank=null;
+    refreshAll();
+    $("#env").textContent="Imported bank data cleared";
+  }
 }
 
 /* ===== Filters ===== */
@@ -1070,6 +1237,7 @@ const render = {
     selectRow(tb,"bank");
     $("#bStats").textContent=`${rows.length} tx • ${fmt.format(rows.reduce((a,b)=>a+num(b.amount),0))}`;
     $("#bOpen").textContent=`Open: ${rows.filter(x=>x.match_status!=="matched").length}`;
+    const cnt=$("#bankCount"); if(cnt) cnt.textContent=State.bank.filter(x=>x._source==="import").length;
   },
   suppliers: renderSuppliersTable
 };
@@ -1310,6 +1478,9 @@ $("#bDel").onclick=()=>{ const sel=State.sel.bank; if(!sel) return alert("Select
 $("#bCSV").onclick=()=>{ const rows=filtered.bank(); const hdr=[{label:"date",get:r=>r.date},{label:"description",get:r=>r.description},{label:"amount",get:r=>num(r.amount)},{label:"type",get:r=>r.type},{label:"invoice_no",get:r=>r.invoice_no},{label:"match_status",get:r=>r.match_status}]; csvDownload(`bank_${today()}.csv`,hdr,rows); };
 $("#bPDF").onclick=()=> printTableAsPDF("Bank", $("#bTbl"));
 $("#bRecon").onclick=autoRecon;
+$("#bankFile").onchange=e=>{ const f=e.target.files?.[0]; if(f){ importBankFile(f); e.target.value=""; } };
+$("#bankTemplate").onclick=downloadBankTemplate;
+$("#bankClear").onclick=clearImportedBank;
 
 // reports
 $("#rRun").onclick=runReport;
