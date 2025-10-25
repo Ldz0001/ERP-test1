@@ -240,16 +240,8 @@ tbody tr:hover{background:var(--row-hover)}
             </div>
             <div class="wrap">
               <table id="bTbl">
-                <thead>
-                  <tr>
-                    <th data-k="date">Date</th>
-                    <th data-k="description">Description</th>
-                    <th data-k="amount" class="mono">Amount</th>
-                    <th data-k="type">Type</th>
-                    <th data-k="invoice_no">Invoice #</th>
-                    <th data-k="match_status">Match</th>
-                  </tr>
-                </thead><tbody></tbody>
+                <thead><tr id="bHead"></tr></thead>
+                <tbody></tbody>
               </table>
             </div>
           </div>
@@ -324,9 +316,20 @@ tbody tr:hover{background:var(--row-hover)}
           <div class="grp"><button class="btn pri" id="supTemplate">Download template</button><button class="btn" id="supClear">Clear imported</button></div>
           <span class="tiny right">Imported rows: <span id="supCount">0</span></span>
         </div>
+        <div class="bar" style="margin-top:1rem">
+          <div class="grp"><div class="tiny">Import bank movements (.xlsx)</div><input type="file" id="bankFile" accept=".xlsx,.xls,.csv"></div>
+          <div class="grp"><button class="btn" id="bankClear">Clear imported</button></div>
+          <span class="tiny right">Imported movements: <span id="bankCount">0</span></span>
+        </div>
         <div class="wrap" style="margin-top:1rem">
           <table id="supTbl">
             <thead><tr id="supHead"></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="wrap" style="margin-top:1rem">
+          <table id="bankImpTbl">
+            <thead><tr id="bankImpHead"></tr></thead>
             <tbody></tbody>
           </table>
         </div>
@@ -383,7 +386,7 @@ const THEME_KEY = "erp_theme";
 const State = {
   sales:[], purch:[], bank:[], suppliers:[],
   sel:{sales:null,purch:null,bank:null},
-  sort:{sales:{k:"date",d:-1},purch:{k:"date",d:-1},bank:{k:"date",d:-1}},
+  sort:{sales:{k:"date",d:-1},purch:{k:"date",d:-1},bank:{k:"fecha_ejecucion",d:-1}},
   filter:{
     sales:{q:"",from:"",to:"",st:""},
     purch:{q:"",from:"",to:"",st:""},
@@ -391,26 +394,6 @@ const State = {
   },
   hidden:{purch:new Set()},
   cfg:{reconDays:5}
-};
-
-/* ===== Seed (if empty) ===== */
-const Seed = {
-  sales:[
-    {invoice_no:"INV-1001",date:"2025-10-02",customer:"ABC Corp",amount:1200,status:"unpaid",paid_date:"",pdf_link:"invoices/INV-1001.pdf",notes:"Website design"},
-    {invoice_no:"INV-1002",date:"2025-09-25",customer:"Delta LLC",amount:850.5,status:"paid",paid_date:"2025-10-01",pdf_link:"invoices/INV-1002.pdf",notes:"Maintenance"},
-    {invoice_no:"INV-1003",date:"2025-10-05",customer:"Gamma SA",amount:2300,status:"partial",paid_date:"2025-10-10",pdf_link:"invoices/INV-1003.pdf",notes:"Custom module"}
-  ],
-  purch:[
-    {invoice_no:"BILL-7001",date:"2025-09-29",supplier:"CloudHost",amount:400,status:"paid",paid_date:"2025-10-03",pdf_link:"bills/BILL-7001.pdf"},
-    {invoice_no:"BILL-7002",date:"2025-10-03",supplier:"OfficeMart",amount:215.9,status:"unpaid",paid_date:"",pdf_link:"bills/BILL-7002.pdf"}
-  ],
-  bank:[
-    {date:"2025-10-01",description:"Payment from Delta LLC INV-1002",amount:850.5,type:"credit",invoice_no:"INV-1002",match_status:"matched"},
-    {date:"2025-10-10",description:"ABC Corp partial INV-1003",amount:1150,type:"credit",invoice_no:"INV-1003",match_status:"partial"},
-    {date:"2025-10-12",description:"OfficeMart BILL-7002",amount:-215.9,type:"debit",invoice_no:"BILL-7002",match_status:"unmatched"},
-    {date:"2025-10-15",description:"Monthly hosting BILL-7001",amount:-400,type:"debit",invoice_no:"BILL-7001",match_status:"matched"}
-  ],
-  suppliers:[]
 };
 
 /* ===== LocalStorage ===== */
@@ -427,12 +410,13 @@ function loadLS(){
   State.purch = JSON.parse(localStorage.getItem(LS_KEYS.purch) || "[]");
   State.bank  = JSON.parse(localStorage.getItem(LS_KEYS.bank)  || "[]");
   State.suppliers = JSON.parse(localStorage.getItem(LS_KEYS.suppliers) || "[]");
+  State.bank = Array.isArray(State.bank)?State.bank.map(row=>{
+    const mapped=mapBankRow(row);
+    return mapped?Object.assign({}, row||{}, mapped):row;
+  }):[];
   loadPurchHiddenColumns();
-  if(!(State.sales.length||State.purch.length||State.bank.length||State.suppliers.length)){
-    State.sales = Seed.sales.slice(); State.purch = Seed.purch.slice(); State.bank = Seed.bank.slice();
-    State.suppliers = Seed.suppliers.slice();
-    $("#env").textContent="Seed data";
-  } else $("#env").textContent="LocalStorage (loaded)";
+  const hasData = State.sales.length||State.purch.length||State.bank.length||State.suppliers.length;
+  $("#env").textContent = hasData? "LocalStorage (loaded)" : "LocalStorage (empty)";
   syncPurchFromSuppliers();
   refreshAll();
 }
@@ -452,7 +436,10 @@ function importJSONFile(file){
       else{
         if(Array.isArray(j.sales)) State.sales=j.sales;
         if(Array.isArray(j.purch)) State.purch=j.purch;
-        if(Array.isArray(j.bank))  State.bank=j.bank;
+        if(Array.isArray(j.bank))  State.bank=j.bank.map(row=>{
+          const mapped=mapBankRow(row);
+          return mapped?Object.assign({}, row||{}, mapped):row;
+        });
         if(Array.isArray(j.suppliers)) State.suppliers=j.suppliers;
       }
       syncPurchFromSuppliers();
@@ -516,6 +503,15 @@ function normalizeExcelDate(v){
   }
   const str=String(v).trim();
   if(!str) return "";
+  const dmy=str.match(/^(\d{1,2})[\/\.\-](\d{1,2})[\/\.\-](\d{2,4})$/);
+  if(dmy){
+    let year=Number(dmy[3]);
+    if(year<100) year += year>=70?1900:2000;
+    const month=Number(dmy[2]);
+    const day=Number(dmy[1]);
+    const dt=new Date(Date.UTC(year,month-1,day));
+    if(!Number.isNaN(dt.getTime())) return iso(dt);
+  }
   const dt=new Date(str);
   return isNaN(dt.getTime())?str:iso(dt);
 }
@@ -580,6 +576,25 @@ function renderSuppliersTable(){
     tb.innerHTML=State.suppliers.map(row=>`<tr>${SUPPLIER_COLUMNS.map(col=>`<td${col.type!=="text"?" class=\"mono\"":""}>${supplierCellText(col,row[col.key])}</td>`).join("")}</tr>`).join("");
   }
   const cnt=$("#supCount"); if(cnt) cnt.textContent=State.suppliers.length;
+}
+
+function buildBankImportHeader(){
+  const head=$("#bankImpHead");
+  if(head && !head.dataset.ready){
+    head.innerHTML=BANK_COLUMNS.map(col=>`<th>${col.header}</th>`).join("");
+    head.dataset.ready="1";
+  }
+}
+
+function renderBankImportTable(){
+  buildBankImportHeader();
+  const tb=$("#bankImpTbl tbody");
+  if(!tb) return;
+  if(!State.bank.length){
+    tb.innerHTML=`<tr><td colspan="${BANK_COLUMNS.length}" class="tiny">No bank movements imported yet.</td></tr>`;
+  }else{
+    tb.innerHTML=State.bank.map(row=>`<tr>${BANK_COLUMNS.map(col=>`<td${col.type==="currency"?" class=\"mono\"":""}>${formatBankCell(col,row)}</td>`).join("")}</tr>`).join("");
+  }
 }
 
 function applySupplierRows(rows){
@@ -651,6 +666,192 @@ async function importSupplierExcel(file){
   }
 }
 
+function sanitizeHeader(name){
+  return String(name??"")
+    .normalize("NFD").replace(/[\u0300-\u036f]/g,"")
+    .toLowerCase().replace(/[^a-z0-9]+/g,"");
+}
+
+function parseAmount(val){
+  if(val==null) return {value:0,has:false,raw:"",parsed:false};
+  if(typeof val==="number" && Number.isFinite(val)) return {value:val,has:true,raw:"",parsed:true};
+  const str=String(val).trim();
+  if(!str) return {value:0,has:false,raw:"",parsed:false};
+  const normalized=str.replace(/\s+/g,"");
+  const digitsOnly=normalized.replace(/[^0-9,.-]/g,"");
+  let candidate=digitsOnly || normalized;
+  if(!candidate || /^[-.,]$/.test(candidate)){
+    return {value:0,has:true,raw:str,parsed:false};
+  }
+  let parsed=false;
+  let numVal=0;
+  if(/^-?\d{1,3}(?:\.\d{3})+,?\d*$/.test(candidate)){
+    numVal=Number(candidate.replace(/\./g,"").replace(",","."));
+    parsed=Number.isFinite(numVal);
+  }else if(/^[-\d,]+$/.test(candidate) && candidate.includes(",")){
+    numVal=Number(candidate.replace(/,/g,'.'));
+    parsed=Number.isFinite(numVal);
+  }else if(/^[-\d.]+$/.test(candidate)){
+    numVal=Number(candidate);
+    parsed=Number.isFinite(numVal);
+  }
+  if(!parsed){
+    const fallback=num(candidate);
+    if(Number.isFinite(fallback)){
+      numVal=fallback;
+      parsed=true;
+    }
+  }
+  if(parsed) return {value:numVal,has:true,raw:"",parsed:true};
+  return {value:0,has:true,raw:str,parsed:false};
+}
+
+function mapBankRow(row){
+  if(!row || typeof row!=="object") return null;
+  const hasValue=v=>!(v==null || (typeof v==="string" && v.trim()===""));
+  const normalized={};
+  for(const [rawKey,val] of Object.entries(row)){
+    const clean=sanitizeHeader(rawKey);
+    if(!clean) continue;
+    if(!(clean in normalized) || hasValue(val)) normalized[clean]=val;
+    const mapped=BANK_HEADER_MAP[clean];
+    if(mapped && (!(mapped in normalized) || hasValue(val))) normalized[mapped]=val;
+  }
+  const columnByKey=new Map(BANK_COLUMNS.map(col=>[col.key,col]));
+  const get=(key)=>{
+    const direct=row[key];
+    if(hasValue(direct)) return direct;
+    const camel=key.replace(/_([a-z])/g,(_,c)=>c.toUpperCase());
+    if(hasValue(row[camel])) return row[camel];
+    const col=columnByKey.get(key);
+    if(col){
+      const base=col.header;
+      const variants=[base, base?.replace(/\./g," "), base?.replace(/\s+/g," ").trim(), base?.toUpperCase(), base?.toLowerCase()]
+        .filter(Boolean);
+      for(const variant of variants){
+        const val=row[variant];
+        if(hasValue(val)) return val;
+      }
+    }
+    const sanitizedKey=sanitizeHeader(key);
+    if(hasValue(normalized[key])) return normalized[key];
+    if(hasValue(normalized[sanitizedKey])) return normalized[sanitizedKey];
+    const alias=BANK_HEADER_MAP[sanitizedKey];
+    if(alias && hasValue(normalized[alias])) return normalized[alias];
+    return undefined;
+  };
+  const fechaEjec=normalizeExcelDate(get("fecha_ejecucion") ?? row.date ?? "");
+  const fechaValor=normalizeExcelDate(get("fecha_valor") ?? row.value_date ?? "");
+  const concepto=String(get("concepto") ?? row.description ?? "").trim();
+  const factura=String(get("factura") ?? row.invoice_no ?? "").trim();
+  const desglose=String(get("desglose") ?? "").trim();
+  const importeParse=parseAmount(get("importe") ?? row.amount ?? row.importe_operacion ?? "");
+  const saldoParse=parseAmount(get("saldo") ?? row.balance ?? "");
+  const hasData=[concepto,factura,desglose,fechaEjec,fechaValor].some(v=>String(v||"").trim()!="") || importeParse.has || saldoParse.has;
+  if(!hasData) return null;
+  const matchRaw=String(get("match_status") ?? row.estado ?? row.status ?? "").trim();
+  const typeRaw=String(get("type") ?? row.tipo ?? "").trim().toLowerCase();
+  const record={
+    fecha_ejecucion:fechaEjec,
+    fecha_valor:fechaValor,
+    concepto,
+    importe:importeParse.value,
+    saldo:saldoParse.value,
+    factura,
+    desglose,
+    match_status:matchRaw||"unknown",
+    _importe_raw:importeParse.parsed?"":importeParse.raw,
+    _saldo_raw:saldoParse.parsed?"":saldoParse.raw
+  };
+  record.date=record.fecha_ejecucion;
+  record.value_date=record.fecha_valor;
+  record.description=record.concepto;
+  record.amount=record.importe;
+  record.balance=record.saldo;
+  record.invoice_no=factura;
+  const type=(typeRaw==="credit"||typeRaw==="debit")?typeRaw:(record.amount>=0?"credit":"debit");
+  record.type=type;
+  return record;
+}
+
+function applyBankRows(rows){
+  const normalized=rows.map(mapBankRow).filter(Boolean);
+  State.bank=normalized;
+  State.sel.bank=null;
+  refreshAll();
+  $("#env").textContent="Bank movements imported (unsaved)";
+}
+
+async function importBankFile(file){
+  const name=file.name.toLowerCase();
+  if(name.endsWith(".csv")){
+    const fr=new FileReader();
+    fr.onload=()=>{
+      const text=String(fr.result||"").replace(/^\uFEFF/,"");
+      const lines=text.split(/\r?\n/).filter((l,i,arr)=>!(i===arr.length-1 && l.trim()===""));
+      if(!lines.length){ applyBankRows([]); return; }
+      const headers=parseCSVLine(lines[0]);
+      const rows=[];
+      for(let i=1;i<lines.length;i++){
+        const line=lines[i];
+        if(!line.trim()) continue;
+        const cells=parseCSVLine(line);
+        const row={};
+        headers.forEach((h,idx)=>{ row[h]=cells[idx]??""; });
+        rows.push(row);
+      }
+      applyBankRows(rows);
+    };
+    fr.readAsText(file);
+  }else{
+    try{
+      await ensureXLSX();
+    }catch(err){
+      console.error(err);
+      alert("Failed to load Excel parser: "+err.message);
+      return;
+    }
+    const fr=new FileReader();
+    fr.onload=()=>{
+      try{
+        const data=new Uint8Array(fr.result);
+        const wb=XLSX.read(data,{type:"array",cellDates:true});
+        const sheet=wb.Sheets[wb.SheetNames[0]];
+        if(!sheet){ alert("No sheets found in workbook"); return; }
+        const rows=XLSX.utils.sheet_to_json(sheet,{defval:"",raw:true,cellDates:true});
+        applyBankRows(rows);
+      }catch(err){
+        console.error(err);
+        alert("Failed to parse Excel file: "+err.message);
+      }
+    };
+    fr.readAsArrayBuffer(file);
+  }
+}
+
+function buildBankHeader(){
+  const head=$("#bHead");
+  if(!head) return;
+  const keys=BANK_COLUMNS.map(col=>col.key).join("|");
+  if(head.dataset.keys===keys) return;
+  head.innerHTML=BANK_COLUMNS.map(col=>`<th data-k="${col.key}"${col.type==="currency"?" class=\"mono\"":""}>${col.header}</th>`).join("");
+  head.dataset.keys=keys;
+}
+
+function formatBankCell(col,row){
+  const val=row?.[col.key];
+  if(col.type==="currency"){
+    if(col.key==="importe" && row?._importe_raw) return row._importe_raw;
+    if(col.key==="saldo" && row?._saldo_raw) return row._saldo_raw;
+    if(typeof val==="number" && Number.isFinite(val)) return fmt.format(val);
+    if(val==null||val==="") return "—";
+    const n=num(val);
+    return Number.isFinite(n)?fmt.format(n):String(val);
+  }
+  if(val==null||val==="") return "—";
+  return String(val);
+}
+
 function downloadSupplierTemplate(){
   const head=SUPPLIER_COLUMNS.map(col=>`"${col.header}"`).join(",");
   download("supplier_invoices_template.csv", head+"\n", "text/csv");
@@ -676,9 +877,13 @@ const filtered = {
   }).sort(by(State.sort.purch.k, State.sort.purch.d)),
   bank:()=> State.bank.filter(r=>{
     const f=State.filter.bank,q=(f.q||"").toLowerCase();
-    const inR=(!f.from||r.date>=f.from)&&(!f.to||r.date<=f.to);
-    const ty=!f.type||r.type===f.type;
-    const qok=!q||[r.description,r.invoice_no,r.amount].join(" ").toLowerCase().includes(q);
+    const date=(r.fecha_ejecucion||r.date||"");
+    const inR=(!f.from||date>=f.from)&&(!f.to||date<=f.to);
+    const ty=!f.type|| (r.type||"")===f.type;
+    const haystack=[r.concepto,r.factura,r.desglose,r.description,r.invoice_no]
+      .map(v=>String(v??"").toLowerCase()).join(" ");
+    const amtStr=String(r.importe??r.amount??"").toLowerCase();
+    const qok=!q||(haystack.includes(q) || amtStr.includes(q));
     return inR&&ty&&qok;
   }).sort(by(State.sort.bank.k, State.sort.bank.d))
 };
@@ -699,8 +904,9 @@ const FIELDS = {
     ["pdf_link","PDF link","text"]
   ],
   bank:[
-    ["date","Date","date"],["description","Description","text"],["amount","Amount","number"],
-    ["type","Type","select","credit,debit"],["invoice_no","Invoice #","text"],["match_status","Match","select","matched,unmatched,partial,unknown"]
+    ["fecha_ejecucion","F. ejecución","date"],["fecha_valor","F. valor","date"],["concepto","Concepto","text"],
+    ["importe","Importe","number"],["saldo","Saldo","number"],["factura","Factura","text"],
+    ["desglose","Desglose","textarea"],["type","Type","select","credit,debit"],["match_status","Match","select","matched,unmatched,partial,unknown"]
   ]
 };
 
@@ -742,6 +948,44 @@ const SUPPLIER_COLUMNS = [
   {header:"Forma de Pago",key:"forma_pago",type:"text"},
   {header:"Fecha de Pago",key:"fecha_pago",type:"date"},
   {header:"PMP",key:"pmp",type:"number"}
+];
+
+const BANK_HEADER_MAP = {
+  fejecucion:"fecha_ejecucion",
+  fechaejecucion:"fecha_ejecucion",
+  fechaoperacion:"fecha_ejecucion",
+  fvalor:"fecha_valor",
+  fechavalor:"fecha_valor",
+  concept:"concepto",
+  concepto:"concepto",
+  description:"concepto",
+  importe:"importe",
+  amount:"importe",
+  importeoperacion:"importe",
+  saldo:"saldo",
+  balance:"saldo",
+  factura:"factura",
+  invoice:"factura",
+  facturaasociada:"factura",
+  desglose:"desglose",
+  detalle:"desglose",
+  details:"desglose",
+  match:"match_status",
+  matchstatus:"match_status",
+  estado:"match_status",
+  status:"match_status",
+  tipo:"type",
+  type:"type"
+};
+
+const BANK_COLUMNS = [
+  {header:"F. ejecución",key:"fecha_ejecucion",type:"date"},
+  {header:"F. valor",key:"fecha_valor",type:"date"},
+  {header:"Concepto",key:"concepto",type:"text"},
+  {header:"Importe",key:"importe",type:"currency"},
+  {header:"Saldo",key:"saldo",type:"currency"},
+  {header:"FACTURA",key:"factura",type:"text"},
+  {header:"Desglose",key:"desglose",type:"text"}
 ];
 
 const PURCHASE_COLUMNS = (()=>{
@@ -965,6 +1209,25 @@ $("#mSave").onclick=()=>{
     obj[k]= (t==="number")? num(v) : v;
   }
   if(modalCtx.type!=="bank"){ obj.amount=num(obj.amount); }
+  else{
+    obj.importe=num(obj.importe);
+    obj.saldo=num(obj.saldo);
+    obj.fecha_ejecucion=obj.fecha_ejecucion||"";
+    obj.fecha_valor=obj.fecha_valor||"";
+    obj.date=obj.fecha_ejecucion;
+    obj.value_date=obj.fecha_valor;
+    obj.concepto=obj.concepto||"";
+    obj.description=obj.concepto;
+    obj.factura=obj.factura||"";
+    obj.invoice_no=obj.factura;
+    obj.desglose=obj.desglose||"";
+    obj.amount=obj.importe;
+    obj.balance=obj.saldo;
+    obj.type=obj.type|| (obj.amount>=0?"credit":"debit");
+    obj.match_status=obj.match_status||"unknown";
+    obj._importe_raw="";
+    obj._saldo_raw="";
+  }
   const key=modalCtx.type==="sales"?"sales":modalCtx.type==="purch"?"purch":"bank";
   const col=State[key];
   if(modalCtx.mode==="add"){
@@ -1078,16 +1341,28 @@ const render = {
     selectRow(tb,"purch");
   },
   bank(){
-    const rows=filtered.bank(); const tb=$("#bTbl tbody"); tb.innerHTML="";
-    rows.forEach((r,i)=>tb.insertAdjacentHTML("beforeend", `<tr data-i="${i}">
-      <td>${r.date||""}</td><td>${r.description||""}</td>
-      <td class="mono">${fmt.format(num(r.amount))}</td><td>${r.type||""}</td>
-      <td>${r.invoice_no||""}</td>
-      <td><span class="status ${r.match_status==="matched"?"ok":r.match_status==="unmatched"?"bad":"warn"}">${r.match_status||"unknown"}</span></td>
-    </tr>`));
-    selectRow(tb,"bank");
-    $("#bStats").textContent=`${rows.length} tx • ${fmt.format(rows.reduce((a,b)=>a+num(b.amount),0))}`;
-    $("#bOpen").textContent=`Open: ${rows.filter(x=>x.match_status!=="matched").length}`;
+    buildBankHeader();
+    const rows=filtered.bank(); const tb=$("#bTbl tbody");
+    if(!tb) return;
+    tb.innerHTML="";
+    if(!rows.length){
+      tb.innerHTML=`<tr><td colspan="${BANK_COLUMNS.length}" class="tiny">No bank movements loaded.</td></tr>`;
+      State.sel.bank=null;
+    }else{
+      rows.forEach((r,i)=>{
+        const cells=BANK_COLUMNS.map(col=>{
+          const cls=col.type==="currency"?" class=\"mono\"":"";
+          return `<td${cls}>${formatBankCell(col,r)}</td>`;
+        }).join("");
+        tb.insertAdjacentHTML("beforeend", `<tr data-i="${i}">${cells}</tr>`);
+      });
+      selectRow(tb,"bank");
+    }
+    const total=rows.reduce((a,b)=>a+num(b.amount??b.importe??0),0);
+    $("#bStats").textContent=`${rows.length} tx • ${fmt.format(total)}`;
+    $("#bOpen").textContent=`Open: ${rows.filter(x=>(x.match_status||"").toLowerCase()!=="matched").length}`;
+    const cnt=$("#bankCount"); if(cnt) cnt.textContent=State.bank.length;
+    renderBankImportTable();
   },
   suppliers: renderSuppliersTable
 };
@@ -1325,7 +1600,26 @@ $("#pOpenPDF").onclick=()=>{ const r=State.sel.purch; if(r&&r.pdf_link) window.o
 $("#bAdd").onclick=()=>openModal("bank","add");
 $("#bEdit").onclick=()=> State.sel.bank? openModal("bank","edit", State.sel.bank) : alert("Select a row");
 $("#bDel").onclick=()=>{ const sel=State.sel.bank; if(!sel) return alert("Select a row"); if(confirm("Delete selected?")){ State.bank=State.bank.filter(x=>x!==sel); State.sel.bank=null; refreshAll(); $("#env").textContent="Edited (unsaved)"; }};
-$("#bCSV").onclick=()=>{ const rows=filtered.bank(); const hdr=[{label:"date",get:r=>r.date},{label:"description",get:r=>r.description},{label:"amount",get:r=>num(r.amount)},{label:"type",get:r=>r.type},{label:"invoice_no",get:r=>r.invoice_no},{label:"match_status",get:r=>r.match_status}]; csvDownload(`bank_${today()}.csv`,hdr,rows); };
+$("#bCSV").onclick=()=>{
+  const rows=filtered.bank();
+  const hdr=[
+    ...BANK_COLUMNS.map(col=>({
+      label:col.header,
+      get:r=>{
+        const val=r[col.key];
+        if(col.type==="currency"){
+          if(col.key==="importe" && r._importe_raw) return r._importe_raw;
+          if(col.key==="saldo" && r._saldo_raw) return r._saldo_raw;
+          return typeof val==="number"?val:num(val);
+        }
+        return val??"";
+      }
+    })),
+    {label:"Type",get:r=>r.type||""},
+    {label:"Match",get:r=>r.match_status||""}
+  ];
+  csvDownload(`bank_${today()}.csv`,hdr,rows);
+};
 $("#bPDF").onclick=()=> printTableAsPDF("Bank", $("#bTbl"));
 $("#bRecon").onclick=autoRecon;
 
@@ -1351,6 +1645,16 @@ $("#supClear").onclick=()=>{
     syncPurchFromSuppliers();
     refreshAll();
     $("#env").textContent="Supplier data cleared";
+  }
+};
+$("#bankFile").onchange=e=>{ const f=e.target.files?.[0]; if(f){ importBankFile(f); e.target.value=""; } };
+$("#bankClear").onclick=()=>{
+  if(!State.bank.length) return;
+  if(confirm("Clear imported bank movements?")){
+    State.bank=[];
+    State.sel.bank=null;
+    refreshAll();
+    $("#env").textContent="Bank data cleared";
   }
 };
 
