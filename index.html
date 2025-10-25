@@ -198,6 +198,10 @@ tbody tr:hover{background:var(--row-hover)}
                 <th data-k="amount" class="mono">Amount</th>
                 <th data-k="status">Status</th>
                 <th data-k="paid_date">Paid Date</th>
+                <th data-k="due_date">Due Date</th>
+                <th data-k="payment_method">Payment Method</th>
+                <th data-k="retention_amount" class="mono">Retention</th>
+                <th data-k="department">Department</th>
                 <th data-k="pdf_link">PDF</th>
               </tr>
             </thead><tbody></tbody>
@@ -422,7 +426,8 @@ function loadLS(){
     $("#env").textContent="Seed data";
   } else $("#env").textContent="LocalStorage (loaded)";
   syncPurchFromSuppliers();
-  renderAll(); stamp();
+  syncBankFromSuppliers();
+  renderAll(); autoRecon(); stamp();
 }
 function clearLS(){ localStorage.removeItem(LS_KEYS.sales);localStorage.removeItem(LS_KEYS.purch);localStorage.removeItem(LS_KEYS.bank);localStorage.removeItem(LS_KEYS.suppliers); $("#env").textContent="LocalStorage (cleared)";}
 
@@ -444,7 +449,8 @@ function importJSONFile(file){
         if(Array.isArray(j.suppliers)) State.suppliers=j.suppliers;
       }
       syncPurchFromSuppliers();
-      renderAll(); stamp(); $("#env").textContent="Imported (unsaved)";
+      syncBankFromSuppliers();
+      renderAll(); autoRecon(); stamp(); $("#env").textContent="Imported (unsaved)";
     }catch(e){ alert("Invalid JSON: "+e.message); }
   };
   fr.readAsText(file);
@@ -543,6 +549,22 @@ function supplierCellText(col,val){
   return String(val);
 }
 
+function supplierInvoiceKey(row){
+  return (row?.numero_factura||row?.dc||"").toString().trim().toUpperCase();
+}
+
+function formatRetention(amount, rate){
+  const amt=num(amount);
+  const showAmt=Number.isFinite(amt) && amt!==0;
+  const rateVal=typeof rate==="number"?rate:num(rate);
+  const showRate=Number.isFinite(rateVal) && rateVal!==0;
+  if(!showAmt && !showRate) return "—";
+  const pct=showRate? `${(rateVal>1?rateVal:rateVal*100).toFixed(2)}%` : "";
+  if(showAmt && showRate) return `${fmt.format(amt)} (${pct})`;
+  if(showAmt) return fmt.format(amt);
+  return pct;
+}
+
 function buildSupplierHeader(){
   const head=$("#supHead");
   if(head && !head.dataset.ready){
@@ -567,7 +589,9 @@ function applySupplierRows(rows){
   const normalized=rows.map(normalizeSupplierRow).filter(Boolean);
   State.suppliers=normalized;
   syncPurchFromSuppliers();
+  syncBankFromSuppliers();
   renderAll();
+  autoRecon();
   stamp();
   $("#env").textContent="Supplier invoices imported (unsaved)";
 }
@@ -651,7 +675,8 @@ const filtered = {
     const f=State.filter.purch,q=f.q.toLowerCase();
     const inR=(!f.from||r.date>=f.from)&&(!f.to||r.date<=f.to);
     const st=!f.st||r.status===f.st;
-    const qok=!q||[r.invoice_no,r.supplier].join(" ").toLowerCase().includes(q);
+    const hay=[r.invoice_no,r.supplier,r.payment_method||r.forma_pago,r.department||r.departamento,r.category||r.categoria,r.notes||"",r.er_code||r.codigo_er||""].join(" ").toLowerCase();
+    const qok=!q||hay.includes(q);
     return inR&&st&&qok;
   }).sort(by(State.sort.purch.k, State.sort.purch.d)),
   bank:()=> State.bank.filter(r=>{
@@ -672,7 +697,10 @@ const FIELDS = {
   ],
   purch:[
     ["invoice_no","Invoice #","text"],["date","Date","date"],["supplier","Supplier","text"],["amount","Amount","number"],
-    ["status","Status","select","paid,unpaid,partial"],["paid_date","Paid Date","date"],["pdf_link","PDF link","text"]
+    ["status","Status","select","paid,unpaid,partial"],["paid_date","Paid Date","date"],["due_date","Due Date","date"],
+    ["payment_method","Payment Method","text"],["department","Department","text"],["category","Category","text"],
+    ["er_code","ER Code","text"],["opex_capex","OPEX/CAPEX","text"],["retention_amount","Retention Amount","number"],
+    ["retention_rate","Retention %","number"],["notes","Notes","textarea"],["pdf_link","PDF link","text"]
   ],
   bank:[
     ["date","Date","date"],["description","Description","text"],["amount","Amount","number"],
@@ -740,14 +768,14 @@ function mapSupplierToPurchase(row){
     status:supplierStatusToPurchStatus(row.estado_pago),
     paid_date:row.fecha_pago||"",
     due_date:row.fecha_vencimiento||row.fecha_tope_pago||"",
+    payment_method:row.forma_pago||"",
     retention_amount:Number.isFinite(retentionAmount)?retentionAmount:0,
     retention_rate:row.porcentaje_retencion??"",
     opex_capex:row.opex_capex||"",
-    departamento:row.departamento||"",
-    categoria:row.categoria||"",
-    codigo_er:row.codigo_er||"",
-    forma_pago:row.forma_pago||"",
-    concepto_libre:row.concepto_libre||"",
+    department:row.departamento||row.department||"",
+    category:row.categoria||row.category||"",
+    er_code:row.codigo_er||row.er_code||"",
+    notes:row.concepto_libre||"",
     supplier_details:row,
     _source:"supplier"
   };
@@ -756,14 +784,68 @@ function mapSupplierToPurchase(row){
 }
 
 function syncPurchFromSuppliers(){
-  const supNos=new Set(State.suppliers.map(r=>(r.numero_factura||r.dc||"").toString().trim().toUpperCase()));
+  const supNos=new Set(State.suppliers.map(r=>supplierInvoiceKey(r)));
   const manual=State.purch.filter(p=>{
     if(p._source==="supplier") return false;
-    const inv=(p.invoice_no||"").toString().trim().toUpperCase();
+    const inv=supplierInvoiceKey({numero_factura:p.invoice_no,dc:p.invoice_no});
     return !supNos.has(inv);
   });
   const imported=State.suppliers.map(mapSupplierToPurchase);
   State.purch=[...manual,...imported];
+  State.sel.purch=null;
+}
+
+function syncBankFromSuppliers(){
+  const manual=[];
+  const invoiceMap=new Map();
+  for(const entry of State.bank){
+    if(entry._source==="supplier") continue;
+    manual.push(entry);
+    const inv=entry.invoice_no?supplierInvoiceKey({numero_factura:entry.invoice_no,dc:entry.invoice_no}):"";
+    if(inv){
+      if(!invoiceMap.has(inv)) invoiceMap.set(inv,[]);
+      invoiceMap.get(inv).push(entry);
+    }
+  }
+  const derived=[];
+  for(const row of State.suppliers){
+    const invKey=supplierInvoiceKey(row);
+    if(!invKey) continue;
+    const status=supplierStatusToPurchStatus(row.estado_pago);
+    const matchStatus=status==="paid"?"matched":status==="partial"?"partial":"unmatched";
+    const linked=invoiceMap.get(invKey);
+    if(linked&&linked.length){
+      linked.forEach(entry=>{
+        entry.match_status=matchStatus;
+        if(!entry.date && row.fecha_pago) entry.date=row.fecha_pago;
+        if(!entry.description){
+          const name=(row.razon_social||row.sociedad||"Supplier").trim();
+          const inv=row.numero_factura||row.dc||"";
+          entry.description=`${name} ${inv}`.trim();
+        }
+      });
+      continue;
+    }
+    if((status==="paid"||status==="partial") && row.fecha_pago){
+      const amount=num(row.importe_total);
+      if(Number.isFinite(amount) && amount!==0){
+        const name=(row.razon_social||row.sociedad||"Supplier").trim();
+        const inv=row.numero_factura||row.dc||"";
+        derived.push({
+          date:row.fecha_pago,
+          description:`${name} ${inv}`.trim(),
+          amount:-Math.abs(amount),
+          type:"debit",
+          invoice_no:inv,
+          match_status:matchStatus,
+          supplier_details:row,
+          _source:"supplier"
+        });
+      }
+    }
+  }
+  State.bank=[...manual,...derived];
+  State.sel.bank=null;
 }
 function openModal(type, mode, rec){
   modalCtx={type,mode,rec: Object.assign({},rec||{})};
@@ -805,7 +887,7 @@ $("#mSave").onclick=()=>{
     }
   }
   $("#modal").classList.remove("open");
-  renderAll(); $("#env").textContent="Edited (unsaved)"; stamp();
+  renderAll(); autoRecon(); $("#env").textContent="Edited (unsaved)"; stamp();
 };
 
 /* ===== Rendering ===== */
@@ -884,6 +966,10 @@ const render = {
       <td class="mono">${fmt.format(num(r.amount))}</td>
       <td><span class="status ${r.status==="paid"?"ok":r.status==="unpaid"?"bad":"warn"}">${r.status||"—"}</span></td>
       <td>${r.paid_date||"—"}</td>
+      <td>${r.due_date||"—"}</td>
+      <td>${r.payment_method||r.forma_pago||"—"}</td>
+      <td class="mono">${formatRetention(r.retention_amount,r.retention_rate)}</td>
+      <td>${r.department||r.departamento||"—"}</td>
       <td>${r.pdf_link?`<a href="${r.pdf_link}" target="_blank">Open</a>`:"—"}</td>
     </tr>`));
     selectRow(tb,"purch");
@@ -1047,7 +1133,24 @@ $("#pAdd").onclick=()=>openModal("purch","add");
 $("#pEdit").onclick=()=> State.sel.purch? openModal("purch","edit", State.sel.purch) : alert("Select a row");
 $("#pDel").onclick=()=>{ const sel=State.sel.purch; if(!sel) return alert("Select a row"); if(confirm("Delete selected?")){ State.purch=State.purch.filter(x=>x!==sel); State.sel.purch=null; render.purch(); $("#env").textContent="Edited (unsaved)"; }};
 // purch export/open
-$("#pCSV").onclick=()=>{ const rows=filtered.purch(); const hdr=[{label:"invoice_no",get:r=>r.invoice_no},{label:"date",get:r=>r.date},{label:"supplier",get:r=>r.supplier},{label:"amount",get:r=>num(r.amount)},{label:"status",get:r=>r.status},{label:"paid_date",get:r=>r.paid_date},{label:"pdf_link",get:r=>r.pdf_link}]; csvDownload(`purchases_${today()}.csv`,hdr,rows); };
+$("#pCSV").onclick=()=>{ const rows=filtered.purch(); const hdr=[
+  {label:"invoice_no",get:r=>r.invoice_no},
+  {label:"date",get:r=>r.date},
+  {label:"supplier",get:r=>r.supplier},
+  {label:"amount",get:r=>num(r.amount)},
+  {label:"status",get:r=>r.status},
+  {label:"paid_date",get:r=>r.paid_date},
+  {label:"due_date",get:r=>r.due_date},
+  {label:"payment_method",get:r=>r.payment_method||r.forma_pago},
+  {label:"department",get:r=>r.department||r.departamento},
+  {label:"category",get:r=>r.category||r.categoria},
+  {label:"er_code",get:r=>r.er_code||r.codigo_er},
+  {label:"opex_capex",get:r=>r.opex_capex},
+  {label:"retention_amount",get:r=>num(r.retention_amount)},
+  {label:"retention_rate",get:r=>r.retention_rate},
+  {label:"notes",get:r=>r.notes||r.concepto_libre||""},
+  {label:"pdf_link",get:r=>r.pdf_link}
+]; csvDownload(`purchases_${today()}.csv`,hdr,rows); };
 $("#pPDF").onclick=()=> printTableAsPDF("Purchases", $("#pTbl"));
 $("#pOpenPDF").onclick=()=>{ const r=State.sel.purch; if(r&&r.pdf_link) window.open(r.pdf_link,"_blank"); else alert("Select a row with PDF link"); };
 
@@ -1079,7 +1182,9 @@ $("#supClear").onclick=()=>{
   if(confirm("Clear imported supplier invoices?")){
     State.suppliers=[];
     syncPurchFromSuppliers();
+    syncBankFromSuppliers();
     renderAll();
+    autoRecon();
     stamp();
     $("#env").textContent="Supplier data cleared";
   }
