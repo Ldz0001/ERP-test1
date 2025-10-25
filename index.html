@@ -172,7 +172,7 @@ tbody tr:hover{background:var(--row-hover)}
       <section id="purch" class="panel hidden">
         <div class="bar">
           <div class="grp">
-            <input id="pQ" placeholder="Search (invoice, supplier)…">
+            <input id="pQ" placeholder="Search (invoice, supplier, dept)…">
             <input id="pFrom" type="date"><input id="pTo" type="date">
             <select id="pSt"><option value="">Any</option><option>paid</option><option>unpaid</option><option>partial</option></select>
           </div>
@@ -197,7 +197,11 @@ tbody tr:hover{background:var(--row-hover)}
                 <th data-k="supplier">Supplier</th>
                 <th data-k="amount" class="mono">Amount</th>
                 <th data-k="status">Status</th>
+                <th data-k="due_date">Due Date</th>
                 <th data-k="paid_date">Paid Date</th>
+                <th data-k="retention_amount" class="mono">Retention</th>
+                <th data-k="forma_pago">Payment</th>
+                <th data-k="codigo_er">ERP Code</th>
                 <th data-k="pdf_link">PDF</th>
               </tr>
             </thead><tbody></tbody>
@@ -651,7 +655,17 @@ const filtered = {
     const f=State.filter.purch,q=f.q.toLowerCase();
     const inR=(!f.from||r.date>=f.from)&&(!f.to||r.date<=f.to);
     const st=!f.st||r.status===f.st;
-    const qok=!q||[r.invoice_no,r.supplier].join(" ").toLowerCase().includes(q);
+    const searchBlob=[
+      r.invoice_no,
+      r.supplier,
+      r.departamento,
+      r.categoria,
+      r.codigo_er,
+      r.forma_pago,
+      r.opex_capex,
+      r.concepto_libre
+    ].join(" ").toLowerCase();
+    const qok=!q||searchBlob.includes(q);
     return inR&&st&&qok;
   }).sort(by(State.sort.purch.k, State.sort.purch.d)),
   bank:()=> State.bank.filter(r=>{
@@ -672,7 +686,11 @@ const FIELDS = {
   ],
   purch:[
     ["invoice_no","Invoice #","text"],["date","Date","date"],["supplier","Supplier","text"],["amount","Amount","number"],
-    ["status","Status","select","paid,unpaid,partial"],["paid_date","Paid Date","date"],["pdf_link","PDF link","text"]
+    ["status","Status","select","paid,unpaid,partial"],["due_date","Due Date","date"],["paid_date","Paid Date","date"],
+    ["retention_amount","Retention Amount","number"],["retention_rate","Retention %","number"],
+    ["forma_pago","Payment Method","text"],["opex_capex","OPEX/CAPEX","text"],["departamento","Department","text"],
+    ["categoria","Category","text"],["codigo_er","ERP Code","text"],["concepto_libre","Free Text","textarea"],
+    ["pdf_link","PDF link","text"]
   ],
   bank:[
     ["date","Date","date"],["description","Description","text"],["amount","Amount","number"],
@@ -756,14 +774,46 @@ function mapSupplierToPurchase(row){
 }
 
 function syncPurchFromSuppliers(){
-  const supNos=new Set(State.suppliers.map(r=>(r.numero_factura||r.dc||"").toString().trim().toUpperCase()));
+  const toKey=v=>(v||"").toString().trim().toUpperCase();
+  const supplierInvoiceKeys=new Set(State.suppliers.map(r=>toKey(r.numero_factura||r.dc||"")));
+  const prevSupplierRecords=new Map();
+  State.purch.filter(p=>p._source==="supplier").forEach(p=>{
+    const key=toKey(p.invoice_no);
+    if(key) prevSupplierRecords.set(key,p);
+  });
   const manual=State.purch.filter(p=>{
     if(p._source==="supplier") return false;
-    const inv=(p.invoice_no||"").toString().trim().toUpperCase();
-    return !supNos.has(inv);
+    const inv=toKey(p.invoice_no);
+    return !supplierInvoiceKeys.has(inv);
   });
-  const imported=State.suppliers.map(mapSupplierToPurchase);
+  const hasValue=val=>{
+    if(val===null||val===undefined) return false;
+    if(typeof val==="number") return Number.isFinite(val);
+    if(typeof val==="string") return val.trim().length>0;
+    return true;
+  };
+  const preserveFields=[
+    "pdf_link","due_date","paid_date","retention_amount","retention_rate",
+    "forma_pago","opex_capex","departamento","categoria","codigo_er","concepto_libre"
+  ];
+  const imported=State.suppliers.map(row=>{
+    const purchase=mapSupplierToPurchase(row);
+    const key=toKey(purchase.invoice_no);
+    const prev=prevSupplierRecords.get(key);
+    if(prev){
+      preserveFields.forEach(field=>{
+        if(!hasValue(purchase[field]) && hasValue(prev[field])){
+          purchase[field]=prev[field];
+        }
+      });
+    }
+    return purchase;
+  });
   State.purch=[...manual,...imported];
+  if(State.sel.purch){
+    const selectedKey=toKey(State.sel.purch.invoice_no);
+    State.sel.purch=State.purch.find(p=>toKey(p.invoice_no)===selectedKey) || null;
+  }
 }
 function openModal(type, mode, rec){
   modalCtx={type,mode,rec: Object.assign({},rec||{})};
@@ -784,7 +834,11 @@ $("#mSave").onclick=()=>{
   const obj={};
   for(const [k,_,t] of FIELDS[modalCtx.type]){
     const v=$("#f_"+k).value;
-    obj[k]= (t==="number")? num(v) : v;
+    if(t==="number"){
+      obj[k]= v.trim()===""? "": num(v);
+    }else{
+      obj[k]= v;
+    }
   }
   if(modalCtx.type!=="bank"){ obj.amount=num(obj.amount); }
   const key=modalCtx.type==="sales"?"sales":modalCtx.type==="purch"?"purch":"bank";
@@ -809,7 +863,23 @@ $("#mSave").onclick=()=>{
 };
 
 /* ===== Rendering ===== */
-function renderAll(){ renderKPIs(); renderAging(); render.sales(); render.purch(); render.bank(); render.suppliers(); renderAudit(); }
+function refreshBankReconIfVisible(){
+  const bankSection=$("#bank");
+  if(bankSection && !bankSection.classList.contains("hidden")){
+    autoRecon();
+  }
+}
+
+function renderAll(){
+  renderKPIs();
+  renderAging();
+  render.sales();
+  render.purch();
+  render.bank();
+  render.suppliers();
+  renderAudit();
+  refreshBankReconIfVisible();
+}
 
 function renderKPIs(){
   const ym=new Date().toISOString().slice(0,7);
@@ -883,7 +953,15 @@ const render = {
       <td>${r.invoice_no||""}</td><td>${r.date||""}</td><td>${r.supplier||""}</td>
       <td class="mono">${fmt.format(num(r.amount))}</td>
       <td><span class="status ${r.status==="paid"?"ok":r.status==="unpaid"?"bad":"warn"}">${r.status||"—"}</span></td>
+      <td>${r.due_date||"—"}</td>
       <td>${r.paid_date||"—"}</td>
+      <td class="mono">${((val)=>{
+        if(val===null||val===undefined||val==="") return "—";
+        const n=num(val);
+        return Number.isFinite(n)?fmt.format(n):String(val);
+      })(r.retention_amount)}</td>
+      <td>${r.forma_pago||"—"}</td>
+      <td>${r.codigo_er||"—"}</td>
       <td>${r.pdf_link?`<a href="${r.pdf_link}" target="_blank">Open</a>`:"—"}</td>
     </tr>`));
     selectRow(tb,"purch");
@@ -1047,7 +1125,28 @@ $("#pAdd").onclick=()=>openModal("purch","add");
 $("#pEdit").onclick=()=> State.sel.purch? openModal("purch","edit", State.sel.purch) : alert("Select a row");
 $("#pDel").onclick=()=>{ const sel=State.sel.purch; if(!sel) return alert("Select a row"); if(confirm("Delete selected?")){ State.purch=State.purch.filter(x=>x!==sel); State.sel.purch=null; render.purch(); $("#env").textContent="Edited (unsaved)"; }};
 // purch export/open
-$("#pCSV").onclick=()=>{ const rows=filtered.purch(); const hdr=[{label:"invoice_no",get:r=>r.invoice_no},{label:"date",get:r=>r.date},{label:"supplier",get:r=>r.supplier},{label:"amount",get:r=>num(r.amount)},{label:"status",get:r=>r.status},{label:"paid_date",get:r=>r.paid_date},{label:"pdf_link",get:r=>r.pdf_link}]; csvDownload(`purchases_${today()}.csv`,hdr,rows); };
+$("#pCSV").onclick=()=>{
+  const rows=filtered.purch();
+  const hdr=[
+    {label:"invoice_no",get:r=>r.invoice_no},
+    {label:"date",get:r=>r.date},
+    {label:"supplier",get:r=>r.supplier},
+    {label:"amount",get:r=>num(r.amount)},
+    {label:"status",get:r=>r.status},
+    {label:"due_date",get:r=>r.due_date},
+    {label:"paid_date",get:r=>r.paid_date},
+    {label:"retention_amount",get:r=>r.retention_amount},
+    {label:"retention_rate",get:r=>r.retention_rate},
+    {label:"forma_pago",get:r=>r.forma_pago},
+    {label:"opex_capex",get:r=>r.opex_capex},
+    {label:"departamento",get:r=>r.departamento},
+    {label:"categoria",get:r=>r.categoria},
+    {label:"codigo_er",get:r=>r.codigo_er},
+    {label:"concepto_libre",get:r=>r.concepto_libre},
+    {label:"pdf_link",get:r=>r.pdf_link}
+  ];
+  csvDownload(`purchases_${today()}.csv`,hdr,rows);
+};
 $("#pPDF").onclick=()=> printTableAsPDF("Purchases", $("#pTbl"));
 $("#pOpenPDF").onclick=()=>{ const r=State.sel.purch; if(r&&r.pdf_link) window.open(r.pdf_link,"_blank"); else alert("Select a row with PDF link"); };
 
