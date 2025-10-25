@@ -1484,6 +1484,52 @@ function bankConceptText(bank){
 function bankConceptKey(bank){
   return normalizeMatchKey([bank?.concept, bank?.details, bank?.description].join(" "));
 }
+function extractPagoWords(text){
+  if(text==null) return [];
+  const raw=fixMojibake(String(text));
+  const lower=raw.toLowerCase();
+  const idx=lower.indexOf("pago");
+  const tail=idx>=0? raw.slice(idx+4) : raw;
+  const cleaned=tail.replace(/,/g," ");
+  const parts=cleaned.split(/\s+/).map(part=>normalizeMatchText(part).trim()).filter(Boolean);
+  return [...new Set(parts)];
+}
+function computeUniqueSupplierInvoiceTokens(){
+  const groups=new Map();
+  for(const row of State.suppliers){
+    const normalized=normalizeMatchText(row?.numero_factura).replace(/\s+/g," ").trim();
+    if(!normalized) continue;
+    const existing=groups.get(normalized);
+    if(existing){
+      existing.count+=1;
+    }else{
+      groups.set(normalized,{count:1,row});
+    }
+  }
+  const tokens=[];
+  groups.forEach((entry,normalized)=>{
+    if(entry.count===1 && entry.row){
+      tokens.push({row:entry.row,search:` ${normalized} `});
+    }
+  });
+  return tokens;
+}
+function matchSupplierRowsByPago(bank, invoiceTokens){
+  if(!bank || !invoiceTokens.length) return [];
+  const text=[bank.description, bank.concept, bank.details, bank.invoice_no].filter(Boolean).join(" ");
+  const words=extractPagoWords(text);
+  if(!words.length) return [];
+  const matches=[];
+  for(const token of invoiceTokens){
+    for(const word of words){
+      if(token.search.includes(` ${word} `)){
+        matches.push(token.row);
+        break;
+      }
+    }
+  }
+  return matches;
+}
 function supplierNameVariants(inv){
   return [inv?.supplier, inv?.razon_social, inv?.sociedad, inv?.customer]
     .map(normalizeMatchText)
@@ -1564,6 +1610,24 @@ function describeSuggestionTarget(inv){
   const amt=fmt.format(invoiceAmountValue(inv));
   return `${name} • ${id} • ${amt}`;
 }
+
+function applyReconciliationMatch(bank, inv){
+  if(!bank || !inv) return;
+  const matchDate=bankPrimaryDate(bank);
+  if(State.purch.includes(inv)){
+    inv.status="conciliado";
+    if(matchDate && !inv.paid_date) inv.paid_date=matchDate;
+    if(inv._source==="supplier" && inv.supplier_details){
+      if(matchDate && !inv.supplier_details.fecha_pago) inv.supplier_details.fecha_pago=matchDate;
+      inv.supplier_details.estado_pago="PAGADA";
+    }
+    return;
+  }
+  if(State.sales.includes(inv)){
+    inv.status="paid";
+    if(matchDate && !inv.paid_date) inv.paid_date=matchDate;
+  }
+}
 function findInvoiceByNumber(no){
   if(!no) return null;
   return State.purch.find(p=>p.invoice_no===no) || State.sales.find(s=>s.invoice_no===no);
@@ -1594,6 +1658,22 @@ function autoRecon(){
     amount:Math.abs(invoiceAmountValue(s)),
     date:s.date||""
   }));
+  const purchaseByInvoiceKey=new Map();
+  State.purch.forEach(p=>{
+    const keys=[
+      invoiceIdentifier(p),
+      p.invoice_no,
+      p.numero_factura,
+      p.dc,
+      p.supplier_details?.numero_factura,
+      p.supplier_details?.dc
+    ];
+    keys.forEach(val=>{
+      const key=invKey(val);
+      if(key && !purchaseByInvoiceKey.has(key)) purchaseByInvoiceKey.set(key,p);
+    });
+  });
+  const supplierInvoiceTokens=computeUniqueSupplierInvoiceTokens();
   const addSuggestion=(bank,inv,score,method)=>{
     if(!inv) return;
     const bankId=bankIndex.get(bank);
@@ -1630,6 +1710,21 @@ function autoRecon(){
       if(guess){
         const inv=findInvoiceByNumber(guess);
         if(inv) addSuggestion(b,inv,210,'Invoice detected in description');
+      }
+    }
+    if(supplierInvoiceTokens.length){
+      const supplierRows=matchSupplierRowsByPago(b, supplierInvoiceTokens);
+      if(supplierRows.length){
+        const seenKeys=new Set();
+        for(const row of supplierRows){
+          const key=invKey(row?.numero_factura||row?.dc);
+          if(!key || seenKeys.has(key)) continue;
+          seenKeys.add(key);
+          const inv=purchaseByInvoiceKey.get(key);
+          if(inv && State.purch.includes(inv)){
+            addSuggestion(b,inv,230,'Pago reference (unique supplier invoice match)');
+          }
+        }
       }
     }
     const pool=b.type==="credit"?sales:purchases;
@@ -1698,9 +1793,11 @@ function autoRecon(){
     if(invId) s.bank.invoice_no=invId;
     else if(s.inv.invoice_no) s.bank.invoice_no=s.inv.invoice_no;
     s.bank.match_status="matched";
-    render.bank();
+    applyReconciliationMatch(s.bank, s.inv);
+    refreshAll();
     autoRecon();
-    $("#env").textContent="Reconciled (unsaved)";
+    saveLS();
+    $("#env").textContent="Reconciled (saved)";
   });
   dcChecks.forEach((info,bank)=>renderWarningForBank(bank));
 }
