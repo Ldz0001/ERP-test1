@@ -232,6 +232,11 @@ tbody tr:hover{background:var(--row-hover)}
             <span id="bStats" class="chip">—</span>
           </div>
         </div>
+        <div class="bar" style="margin-top:.75rem">
+          <div class="grp"><div class="tiny">Import bank transactions (.xlsx/.csv)</div><input type="file" id="bankFile" accept=".xlsx,.xls,.csv"></div>
+          <div class="grp"><button class="btn pri" id="bankTemplate">Download template</button><button class="btn" id="bankClear">Clear imported</button></div>
+          <span class="tiny right">Imported rows: <span id="bankImportCount">0</span></span>
+        </div>
         <div class="grid" style="grid-template-columns:1fr 1fr;gap:1rem">
           <div class="panel">
             <div style="display:flex;align-items:center;gap:.5rem">
@@ -632,6 +637,145 @@ async function importSupplierExcel(file){
 function downloadSupplierTemplate(){
   const head=SUPPLIER_COLUMNS.map(col=>`"${col.header}"`).join(",");
   download("supplier_invoices_template.csv", head+"\n", "text/csv");
+}
+
+/* ===== Bank Import ===== */
+function normalizeBankImportRow(row){
+  if(!row) return null;
+  const normalizeKey=k=>String(k??"").toLowerCase().replace(/[^a-z0-9]/g,"");
+  const map=new Map();
+  Object.entries(row||{}).forEach(([k,v])=>{
+    const key=normalizeKey(k);
+    if(!key) return;
+    if(!map.has(key) || map.get(key)==="" || map.get(key)==null) map.set(key,v);
+  });
+  const get=(...names)=>{
+    for(const name of names){
+      const key=normalizeKey(name);
+      if(!key) continue;
+      if(map.has(key)){
+        const val=map.get(key);
+        if(val==null) continue;
+        if(typeof val==="string"){ if(val.trim()==="") continue; return val; }
+        return val;
+      }
+    }
+    return "";
+  };
+  const dateRaw=get("date","transactiondate","valuedate","postingdate","fecha","fechavalor","fechatransaccion");
+  const description=String(get("description","concept","details","narrative","concepto","descripcion","memo")||"").trim();
+  const debitRaw=get("debit","withdrawal","cargo","debitos","debito");
+  const creditRaw=get("credit","deposit","abono","creditos","credito");
+  const amountRaw=get("amount","importe","netamount","value","importe_total","importetotal","monto");
+  const debit=num(debitRaw);
+  const credit=num(creditRaw);
+  const debitValid=Number.isFinite(debit) && debit!==0;
+  const creditValid=Number.isFinite(credit) && credit!==0;
+  let amount;
+  if(creditValid && debitValid){
+    amount=Math.abs(credit)-Math.abs(debit);
+  }else if(creditValid){
+    amount=Math.abs(credit);
+  }else if(debitValid){
+    amount=-Math.abs(debit);
+  }else{
+    const n=num(amountRaw);
+    amount=Number.isFinite(n)?n:0;
+  }
+  if(!Number.isFinite(amount)) amount=0;
+  let typeRaw=String(get("type","transactiontype","creditdebit","crdr","tipo")||"").toLowerCase();
+  let type="";
+  if(typeRaw.startsWith("c")) type="credit";
+  else if(typeRaw.startsWith("d")) type="debit";
+  if(!type) type=amount>=0?"credit":"debit";
+  const invoice=String(get("invoice_no","invoice","invoice#","invoiceid","factura","reference","ref","documento")||"").trim();
+  let matchRaw=String(get("match_status","matchstatus","match","status","conciliacion","conciliado")||"").toLowerCase();
+  let match="unmatched";
+  if(matchRaw.startsWith("matc")) match="matched";
+  else if(matchRaw.startsWith("part")) match="partial";
+  else if(matchRaw.startsWith("unk")) match="unknown";
+  else if(matchRaw.startsWith("conc")) match="matched";
+  else if(matchRaw.startsWith("pend")) match="unmatched";
+  const normalizedDate=normalizeExcelDate(dateRaw);
+  const hasData = normalizedDate || description || invoice || Math.abs(amount)>0.0001;
+  if(!hasData) return null;
+  return {
+    date: normalizedDate,
+    description,
+    amount,
+    type,
+    invoice_no: invoice,
+    match_status: match||"unmatched"
+  };
+}
+
+function applyBankImportRows(rows){
+  const normalized=rows.map(normalizeBankImportRow).filter(Boolean);
+  const manual=State.bank.filter(b=>b._source!=="import");
+  const imported=normalized.map(row=>Object.assign({_source:"import"},row));
+  State.bank=[...manual,...imported];
+  State.sel.bank=null;
+  refreshAll();
+  updateBankImportCount();
+  $("#env").textContent=`Bank transactions imported (unsaved)`;
+}
+
+async function importBankFile(file){
+  const name=file.name.toLowerCase();
+  if(name.endsWith(".csv")){
+    const fr=new FileReader();
+    fr.onload=()=>{
+      const text=String(fr.result||"").replace(/^\uFEFF/,"");
+      const lines=text.split(/\r?\n/).filter((l,i,arr)=>!(i===arr.length-1 && l.trim()===""));
+      if(!lines.length){ applyBankImportRows([]); return; }
+      const headers=parseCSVLine(lines[0]);
+      const rows=[];
+      for(let i=1;i<lines.length;i++){
+        const line=lines[i];
+        if(!line.trim()) continue;
+        const cells=parseCSVLine(line);
+        const row={};
+        headers.forEach((h,idx)=>{ row[h]=cells[idx]??""; });
+        rows.push(row);
+      }
+      applyBankImportRows(rows);
+    };
+    fr.readAsText(file);
+  }else{
+    try{
+      await ensureXLSX();
+    }catch(err){
+      console.error(err);
+      alert("Failed to load Excel parser: "+err.message);
+      return;
+    }
+    const fr=new FileReader();
+    fr.onload=()=>{
+      try{
+        const data=new Uint8Array(fr.result);
+        const wb=XLSX.read(data,{type:"array",cellDates:true});
+        const sheet=wb.Sheets[wb.SheetNames[0]];
+        if(!sheet){ alert("No sheets found in workbook"); return; }
+        const rows=XLSX.utils.sheet_to_json(sheet,{defval:"",raw:true,cellDates:true});
+        applyBankImportRows(rows);
+      }catch(err){
+        console.error(err);
+        alert("Failed to parse bank file: "+err.message);
+      }
+    };
+    fr.readAsArrayBuffer(file);
+  }
+}
+
+function downloadBankTemplate(){
+  const head=['"Date"','"Description"','"Amount"','"Type"','"Invoice #"','"Match Status"'].join(",");
+  const sample=`"2024-01-05","Subscription","-1200.00","debit","INV-1002","unmatched"\n"2024-01-07","Customer payment","1200.00","credit","INV-1040","matched"`;
+  download("bank_transactions_template.csv", head+"\n"+sample+"\n", "text/csv");
+}
+
+function updateBankImportCount(){
+  const el=$("#bankImportCount");
+  if(el) el.textContent=State.bank.filter(b=>b._source==="import").length;
 }
 
 /* ===== Filters ===== */
@@ -1070,6 +1214,7 @@ const render = {
     selectRow(tb,"bank");
     $("#bStats").textContent=`${rows.length} tx • ${fmt.format(rows.reduce((a,b)=>a+num(b.amount),0))}`;
     $("#bOpen").textContent=`Open: ${rows.filter(x=>x.match_status!=="matched").length}`;
+    updateBankImportCount();
   },
   suppliers: renderSuppliersTable
 };
@@ -1310,6 +1455,18 @@ $("#bDel").onclick=()=>{ const sel=State.sel.bank; if(!sel) return alert("Select
 $("#bCSV").onclick=()=>{ const rows=filtered.bank(); const hdr=[{label:"date",get:r=>r.date},{label:"description",get:r=>r.description},{label:"amount",get:r=>num(r.amount)},{label:"type",get:r=>r.type},{label:"invoice_no",get:r=>r.invoice_no},{label:"match_status",get:r=>r.match_status}]; csvDownload(`bank_${today()}.csv`,hdr,rows); };
 $("#bPDF").onclick=()=> printTableAsPDF("Bank", $("#bTbl"));
 $("#bRecon").onclick=autoRecon;
+$("#bankFile").onchange=e=>{ const f=e.target.files?.[0]; if(f){ importBankFile(f); e.target.value=""; } };
+$("#bankTemplate").onclick=downloadBankTemplate;
+$("#bankClear").onclick=()=>{
+  const count=State.bank.filter(b=>b._source==="import").length;
+  if(!count) return;
+  if(confirm(`Remove ${count} imported bank transaction${count!==1?"s":""}?`)){
+    State.bank=State.bank.filter(b=>b._source!=="import");
+    State.sel.bank=null;
+    refreshAll();
+    $("#env").textContent="Imported bank data cleared";
+  }
+};
 
 // reports
 $("#rRun").onclick=runReport;
