@@ -1495,57 +1495,171 @@ function invoiceIdentifier(inv){
 function invoiceMatchKey(inv){
   return normalizeMatchKey(invoiceIdentifier(inv));
 }
-function extractBankDcRefs(str){
-  if(!str) return [];
-  const text=String(str);
+function purchaseIdentifierValues(inv){
+  if(!inv) return [];
+  const values=[];
+  const seen=new Set();
+  const addVal=val=>{
+    if(val==null) return;
+    const str=String(val).trim();
+    if(!str || seen.has(str)) return;
+    seen.add(str);
+    values.push(str);
+  };
+  const gather=obj=>{
+    if(!obj || typeof obj!=="object") return;
+    Object.entries(obj).forEach(([key,val])=>{
+      if(val==null) return;
+      if(/(invoice|fact|dc|document)/i.test(key)) addVal(val);
+    });
+  };
+  addVal(invoiceIdentifier(inv));
+  gather(inv);
+  gather(inv.supplier_details);
+  return values;
+}
+function extractBankDcRefs(bank){
+  if(!bank) return [];
+  const sources=[bank.invoice_no, bank.details, bank.concept, bank.description];
   const refs=[];
   const seen=new Set();
   const capture=raw=>{
     const trimmed=String(raw??"").trim();
     if(!trimmed) return;
-    const key=invKey(trimmed);
+    const prefixed=/^dc/i.test(trimmed)?trimmed:`DC ${trimmed}`;
+    const key=invKey(prefixed);
     if(!key || seen.has(key)) return;
     seen.add(key);
-    refs.push({raw:trimmed,key,fuzzy:normalizeMatchKey(trimmed)});
+    refs.push({raw:prefixed.trim(),key,fuzzy:normalizeMatchKey(prefixed)});
   };
-  const paren=/DC\s*\([^)]*\)/gi;
-  let match;
-  while((match=paren.exec(text))){
-    capture(match[0]);
-  }
-  if(!refs.length){
-    const simple=/DC[:\-\s]*[A-Za-z0-9\/_.,-]+/gi;
-    while((match=simple.exec(text))){
-      capture(match[0]);
+  const regex=/DC\s*[:\-]?\s*([A-Z0-9]+(?:[\/,;+][A-Z0-9]+)*)/gi;
+  for(const source of sources){
+    if(!source) continue;
+    const sanitized=String(source).replace(/[()]/g," ");
+    let matched=false;
+    let match;
+    while((match=regex.exec(sanitized))){
+      matched=true;
+      const block=match[1]||"";
+      if(!block){
+        capture(match[0]);
+        continue;
+      }
+      block.split(/[\/,;+]/).forEach(part=>{
+        const piece=part.trim();
+        if(piece) capture(`DC ${piece}`);
+      });
+    }
+    if(!matched && String(source).toUpperCase().includes("DC")){
+      capture(source);
     }
   }
   return refs;
 }
-function bankDcReconciliationCheck(bank){
-  if(!bank) return null;
-  const refs=extractBankDcRefs(bank.invoice_no||"");
-  if(!refs.length) return null;
-  const dcKeys=new Set(refs.map(ref=>ref.key));
-  const fuzzyKeys=new Set(refs.map(ref=>ref.fuzzy).filter(Boolean));
-  const supplierMatches=State.suppliers.filter(row=>{
-    const supplierKey=invKey(row.dc);
-    if(dcKeys.has(supplierKey)) return true;
-    const supplierFuzzy=normalizeMatchKey(row.dc);
-    return supplierFuzzy && fuzzyKeys.has(supplierFuzzy);
+function collectPurchasesForBank(bank, primaryPurchase){
+  const refs=extractBankDcRefs(bank);
+  const exactKeys=new Set();
+  const fuzzyKeys=new Set();
+  const addTargetVal=val=>{
+    if(val==null) return;
+    const str=String(val).trim();
+    if(!str) return;
+    const exact=invKey(str);
+    if(exact) exactKeys.add(exact);
+    const fuzzy=normalizeMatchKey(str);
+    if(fuzzy) fuzzyKeys.add(fuzzy);
+  };
+  refs.forEach(ref=>{
+    if(ref.key) exactKeys.add(ref.key);
+    if(ref.fuzzy) fuzzyKeys.add(ref.fuzzy);
   });
-  const total=supplierMatches.reduce((sum,row)=>sum+Math.abs(invoiceAmountValue(row)),0);
+  addTargetVal(bank?.invoice_no);
+  if(primaryPurchase){
+    purchaseIdentifierValues(primaryPurchase).forEach(addTargetVal);
+  }
+  const matches=[];
+  const seen=new Set();
+  const addPurchase=purchase=>{
+    if(!purchase || !State.purch.includes(purchase) || seen.has(purchase)) return;
+    seen.add(purchase);
+    matches.push(purchase);
+  };
+  if(primaryPurchase) addPurchase(primaryPurchase);
+  if(!exactKeys.size && !fuzzyKeys.size) return matches;
+  for(const purchase of State.purch){
+    if(seen.has(purchase)) continue;
+    const identifiers=purchaseIdentifierValues(purchase);
+    if(!identifiers.length) continue;
+    let matched=false;
+    for(const val of identifiers){
+      const exact=invKey(val);
+      if(exact && exactKeys.has(exact)){ matched=true; break; }
+      const fuzzy=normalizeMatchKey(val);
+      if(fuzzy && fuzzyKeys.has(fuzzy)){ matched=true; break; }
+    }
+    if(matched) addPurchase(purchase);
+  }
+  return matches;
+}
+function bankDcReconciliationCheck(bank, supplierByDcKey, supplierByFuzzyKey, purchaseByInvoiceKey, purchaseByFuzzyKey){
+  if(!bank) return null;
+  const refs=extractBankDcRefs(bank);
+  if(!refs.length) return null;
+  const purchases=[];
+  const seenPurchases=new Set();
+  const missingRefs=[];
+  for(const ref of refs){
+    let supplierRows=supplierByDcKey.get(ref.key);
+    if((!supplierRows || !supplierRows.length) && ref.fuzzy){
+      supplierRows=supplierByFuzzyKey.get(ref.fuzzy);
+    }
+    if(supplierRows && supplierRows.length){
+      for(const row of supplierRows){
+        const purchaseKey=invKey(row.numero_factura||row.dc||"");
+        let purchase=null;
+        if(purchaseKey){
+          purchase=purchaseByInvoiceKey.get(purchaseKey);
+          if(!purchase){
+            const purchaseFuzzy=normalizeMatchKey(row.numero_factura||row.dc||"");
+            if(purchaseFuzzy) purchase=purchaseByFuzzyKey.get(purchaseFuzzy);
+          }
+        }
+        if(!purchase){
+          purchase=purchaseByInvoiceKey.get(ref.key);
+        }
+        if(!purchase && ref.fuzzy){
+          purchase=purchaseByFuzzyKey.get(ref.fuzzy);
+        }
+        if(purchase && !seenPurchases.has(purchase)){
+          purchases.push(purchase);
+          seenPurchases.add(purchase);
+        }
+      }
+      continue;
+    }
+    missingRefs.push(ref);
+    let purchase=purchaseByInvoiceKey.get(ref.key);
+    if(!purchase && ref.fuzzy){
+      purchase=purchaseByFuzzyKey.get(ref.fuzzy);
+    }
+    if(purchase && !seenPurchases.has(purchase)){
+      purchases.push(purchase);
+      seenPurchases.add(purchase);
+    }
+  }
+  const total=purchases.reduce((sum,row)=>sum+Math.abs(invoiceAmountValue(row)),0);
   const bankAmt=Math.abs(num(bank.amount));
   let warningMessage="";
-  if(!supplierMatches.length){
-    const refsDisplay=refs.map(ref=>ref.raw).join(", ");
-    warningMessage=`No supplier invoices found for ${refsDisplay}. Please check.`;
-  }else if(Number.isFinite(bankAmt) && Math.abs(bankAmt-total)>0.01){
+  if(missingRefs.length){
+    const missingDisplay=missingRefs.map(ref=>ref.raw).join(", ");
+    warningMessage=`FACTURA references ${missingDisplay} but no supplier invoice with that DC was found.`;
+  }else if(Number.isFinite(bankAmt) && purchases.length && Math.abs(bankAmt-total)>0.01){
     const refsDisplay=refs.map(ref=>ref.raw).join(" + ");
     const totalText=fmt.format(total);
     const bankText=fmt.format(bankAmt);
-    warningMessage=`${refsDisplay} total ${totalText} does not match bank amount ${bankText}. Please check.`;
+    warningMessage=`FACTURA references ${refsDisplay} totaling ${totalText}, but bank amount is ${bankText}.`;
   }
-  return {refs,supplierMatches,total,warningMessage};
+  return {refs,purchases,missingRefs,total,warningMessage};
 }
 function invoiceAmountValue(inv){
   if(!inv) return 0;
@@ -1563,6 +1677,38 @@ function describeSuggestionTarget(inv){
   const id=invoiceIdentifier(inv) || "—";
   const amt=fmt.format(invoiceAmountValue(inv));
   return `${name} • ${id} • ${amt}`;
+}
+
+function markPurchaseConciliated(purchase, matchDate){
+  if(!purchase) return;
+  purchase.status="conciliado";
+  if(matchDate){
+    if(!purchase.paid_date) purchase.paid_date=matchDate;
+    if(!purchase.supplier_paid_date) purchase.supplier_paid_date=matchDate;
+    if(!purchase.fecha_pago) purchase.fecha_pago=matchDate;
+  }
+  purchase.supplier_payment_status="PAGADA";
+  purchase.estado_pago="PAGADA";
+  if(purchase.supplier_details){
+    if(matchDate && !purchase.supplier_details.fecha_pago){
+      purchase.supplier_details.fecha_pago=matchDate;
+    }
+    purchase.supplier_details.estado_pago="PAGADA";
+  }
+}
+
+function applyReconciliationMatch(bank, inv){
+  if(!bank || !inv) return;
+  const matchDate=bankPrimaryDate(bank);
+  if(State.purch.includes(inv)){
+    const purchases=collectPurchasesForBank(bank, inv);
+    purchases.forEach(p=>markPurchaseConciliated(p, matchDate));
+    return;
+  }
+  if(State.sales.includes(inv)){
+    inv.status="paid";
+    if(matchDate && !inv.paid_date) inv.paid_date=matchDate;
+  }
 }
 function findInvoiceByNumber(no){
   if(!no) return null;
@@ -1594,6 +1740,39 @@ function autoRecon(){
     amount:Math.abs(invoiceAmountValue(s)),
     date:s.date||""
   }));
+  const purchaseByInvoiceKey=new Map();
+  const purchaseByFuzzyKey=new Map();
+  State.purch.forEach(p=>{
+    const keys=[
+      invoiceIdentifier(p),
+      p.invoice_no,
+      p.numero_factura,
+      p.dc,
+      p.supplier_details?.numero_factura,
+      p.supplier_details?.dc
+    ];
+    keys.forEach(val=>{
+      if(!val) return;
+      const key=invKey(val);
+      if(key && !purchaseByInvoiceKey.has(key)) purchaseByInvoiceKey.set(key,p);
+      const fuzzy=normalizeMatchKey(val);
+      if(fuzzy && !purchaseByFuzzyKey.has(fuzzy)) purchaseByFuzzyKey.set(fuzzy,p);
+    });
+  });
+  const supplierByDcKey=new Map();
+  const supplierByFuzzyKey=new Map();
+  State.suppliers.forEach(row=>{
+    const key=invKey(row.dc);
+    if(key){
+      if(!supplierByDcKey.has(key)) supplierByDcKey.set(key,[]);
+      supplierByDcKey.get(key).push(row);
+    }
+    const fuzzy=normalizeMatchKey(row.dc);
+    if(fuzzy){
+      if(!supplierByFuzzyKey.has(fuzzy)) supplierByFuzzyKey.set(fuzzy,[]);
+      supplierByFuzzyKey.get(fuzzy).push(row);
+    }
+  });
   const addSuggestion=(bank,inv,score,method)=>{
     if(!inv) return;
     const bankId=bankIndex.get(bank);
@@ -1614,7 +1793,7 @@ function autoRecon(){
     list.push(suggestion);
   };
   for(const b of State.bank){
-    const dcCheck=bankDcReconciliationCheck(b);
+    const dcCheck=bankDcReconciliationCheck(b, supplierByDcKey, supplierByFuzzyKey, purchaseByInvoiceKey, purchaseByFuzzyKey);
     if(dcCheck) dcChecks.set(b, dcCheck);
     if((b.match_status||"").toLowerCase()==="matched") continue;
     const conceptTxt=bankConceptText(b);
@@ -1630,6 +1809,13 @@ function autoRecon(){
       if(guess){
         const inv=findInvoiceByNumber(guess);
         if(inv) addSuggestion(b,inv,210,'Invoice detected in description');
+      }
+    }
+    if(dcCheck && dcCheck.purchases && dcCheck.purchases.length){
+      for(const inv of dcCheck.purchases){
+        if(State.purch.includes(inv)){
+          addSuggestion(b,inv,235,'FACTURA DC match');
+        }
       }
     }
     const pool=b.type==="credit"?sales:purchases;
@@ -1698,9 +1884,11 @@ function autoRecon(){
     if(invId) s.bank.invoice_no=invId;
     else if(s.inv.invoice_no) s.bank.invoice_no=s.inv.invoice_no;
     s.bank.match_status="matched";
-    render.bank();
+    applyReconciliationMatch(s.bank, s.inv);
+    refreshAll();
     autoRecon();
-    $("#env").textContent="Reconciled (unsaved)";
+    saveLS();
+    $("#env").textContent="Reconciled (saved)";
   });
   dcChecks.forEach((info,bank)=>renderWarningForBank(bank));
 }
