@@ -1713,6 +1713,42 @@ function collectPurchasesForBankMatch(bank, inv){
   return matches;
 }
 
+function collectDcRefsForSuggestion(bank, suggestion, purchases){
+  const refs=new Map();
+  const addRef=raw=>{
+    if(raw==null) return;
+    const extracted=extractBankDcRefs({invoice_no:raw});
+    if(extracted && extracted.length){
+      extracted.forEach(ref=>{
+        const display=ref?.raw?ref.raw.replace(/\s+/g," ").toUpperCase():"";
+        const key=display?invKey(display):null;
+        if(key && !refs.has(key)) refs.set(key, display);
+      });
+      return;
+    }
+    const str=String(raw).trim();
+    if(!str || !/DC/i.test(str)) return;
+    const display=str.replace(/\s+/g," ").toUpperCase();
+    const key=invKey(/^DC/i.test(display)?display:`DC ${display}`);
+    if(key && !refs.has(key)) refs.set(key, key);
+  };
+  if(suggestion?.context?.refsDisplay){
+    suggestion.context.refsDisplay.split(/\s*\+\s*/).forEach(part=>addRef(part));
+  }
+  extractBankDcRefs(bank).forEach(ref=>addRef(ref.raw));
+  purchases.forEach(purchase=>{
+    if(!purchase) return;
+    addRef(purchase.dc);
+    addRef(purchase.numero_factura);
+    addRef(purchase.invoice_no);
+    if(purchase.supplier_details){
+      addRef(purchase.supplier_details.dc);
+      addRef(purchase.supplier_details.numero_factura);
+    }
+  });
+  return [...refs.values()];
+}
+
 function applyReconciliationMatch(bank, inv, explicitPurchases=[]){
   if(!bank) return;
   const matchDate=bankPrimaryDate(bank);
@@ -1947,10 +1983,16 @@ function autoRecon(){
   top.forEach((s,i)=> $("#ap"+i).onclick=()=>{
     const primaryTarget=s.targets[0]||null;
     const invId=primaryTarget?invoiceIdentifier(primaryTarget):null;
-    if(invId) s.bank.invoice_no=invId;
-    else if(primaryTarget && primaryTarget.invoice_no) s.bank.invoice_no=primaryTarget.invoice_no;
-    s.bank.match_status="matched";
     const purchaseTargets=s.targets.filter(rec=>State.purch.includes(rec));
+    const dcRefs=collectDcRefsForSuggestion(s.bank, s, purchaseTargets);
+    if(dcRefs.length){
+      s.bank.invoice_no=dcRefs.join(" + ");
+    }else if(invId) {
+      s.bank.invoice_no=invId;
+    }else if(primaryTarget && primaryTarget.invoice_no){
+      s.bank.invoice_no=primaryTarget.invoice_no;
+    }
+    s.bank.match_status="matched";
     applyReconciliationMatch(s.bank, primaryTarget, purchaseTargets);
     refreshAll();
     autoRecon();
