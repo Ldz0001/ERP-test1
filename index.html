@@ -1564,6 +1564,24 @@ function describeSuggestionTarget(inv){
   const amt=fmt.format(invoiceAmountValue(inv));
   return `${name} • ${id} • ${amt}`;
 }
+
+function applyReconciliationMatch(bank, inv){
+  if(!bank || !inv) return;
+  const matchDate=bankPrimaryDate(bank);
+  if(State.purch.includes(inv)){
+    inv.status="conciliado";
+    if(matchDate && !inv.paid_date) inv.paid_date=matchDate;
+    if(inv._source==="supplier" && inv.supplier_details){
+      if(matchDate && !inv.supplier_details.fecha_pago) inv.supplier_details.fecha_pago=matchDate;
+      inv.supplier_details.estado_pago="PAGADA";
+    }
+    return;
+  }
+  if(State.sales.includes(inv)){
+    inv.status="paid";
+    if(matchDate && !inv.paid_date) inv.paid_date=matchDate;
+  }
+}
 function findInvoiceByNumber(no){
   if(!no) return null;
   return State.purch.find(p=>p.invoice_no===no) || State.sales.find(s=>s.invoice_no===no);
@@ -1698,9 +1716,11 @@ function autoRecon(){
     if(invId) s.bank.invoice_no=invId;
     else if(s.inv.invoice_no) s.bank.invoice_no=s.inv.invoice_no;
     s.bank.match_status="matched";
-    render.bank();
+    applyReconciliationMatch(s.bank, s.inv);
+    refreshAll();
     autoRecon();
-    $("#env").textContent="Reconciled (unsaved)";
+    saveLS();
+    $("#env").textContent="Reconciled (saved)";
   });
   dcChecks.forEach((info,bank)=>renderWarningForBank(bank));
 }
