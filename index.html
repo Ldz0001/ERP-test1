@@ -55,6 +55,13 @@ a:hover{text-decoration:underline}
 .btn.pri{background:var(--btn-pri-bg);border-color:var(--btn-pri-border);color:#fff}
 .theme-toggle{font-size:.85rem;display:flex;align-items:center;gap:.35rem;padding:.45rem .75rem}
 .wrap{overflow:auto;border:1px solid var(--border);border-radius:12px}
+.col-menu-wrap{position:relative}
+.col-menu{position:absolute;top:calc(100% + .4rem);right:0;min-width:220px;max-height:320px;overflow:auto;background:var(--surface-strong);border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow);padding:.6rem;display:none;z-index:40}
+.col-menu.open{display:block}
+.col-menu-list label{display:flex;align-items:center;gap:.5rem;font-size:.85rem;margin:.25rem 0}
+.col-menu-list input{margin:0}
+.col-menu-actions{margin-top:.6rem;display:flex;justify-content:flex-end}
+.col-menu-actions .btn{width:100%}
 table{width:100%;border-collapse:collapse}
 th,td{text-align:left;padding:.6rem .55rem;border-bottom:1px solid var(--border);vertical-align:top}
 thead th{position:sticky;top:0;background:var(--panel);border-bottom:1px solid var(--border);cursor:pointer}
@@ -181,6 +188,16 @@ tbody tr:hover{background:var(--row-hover)}
             <button class="btn" id="pEdit">Edit</button>
             <button class="btn" id="pDel">Delete</button>
           </div>
+          <div class="grp col-menu-wrap">
+            <button class="btn" id="pColBtn" type="button" aria-expanded="false" aria-controls="pColMenu">Columns</button>
+            <div id="pColMenu" class="col-menu" role="menu" aria-hidden="true">
+              <div class="tiny" style="margin-bottom:.4rem">Toggle purchase columns</div>
+              <div id="pColList" class="col-menu-list"></div>
+              <div class="col-menu-actions">
+                <button class="btn" type="button" id="pColShowAll">Show all</button>
+              </div>
+            </div>
+          </div>
           <div class="grp">
             <button class="btn pri" id="pCSV">Export CSV</button>
             <button class="btn" id="pPDF">Export PDF</button>
@@ -190,22 +207,7 @@ tbody tr:hover{background:var(--row-hover)}
         </div>
         <div class="wrap">
           <table id="pTbl">
-            <thead>
-              <tr>
-                <th data-k="invoice_no">Invoice #</th>
-                <th data-k="date">Date</th>
-                <th data-k="supplier">Supplier</th>
-                <th data-k="amount" class="mono">Amount</th>
-                <th data-k="status">Status</th>
-                <th data-k="paid_date">Paid Date</th>
-                <th data-k="due_date">Due Date</th>
-                <th data-k="departamento">Department</th>
-                <th data-k="categoria">Category</th>
-                <th data-k="retention_amount" class="mono">Retention</th>
-                <th data-k="forma_pago">Payment Method</th>
-                <th data-k="pdf_link">PDF</th>
-              </tr>
-            </thead><tbody></tbody>
+            <thead><tr id="pHead"></tr></thead><tbody></tbody>
           </table>
         </div>
       </section>
@@ -253,7 +255,7 @@ tbody tr:hover{background:var(--row-hover)}
           </div>
           <div class="panel">
             <div class="title" style="font-size:1rem">Suggested Matches</div>
-            <div class="tiny">Click to apply</div>
+            <div class="tiny">Run Auto-Reconcile to populate matches, then click Apply.</div>
             <div id="bSug" class="grid" style="grid-template-columns:1fr;gap:.6rem;margin-top:.5rem"></div>
           </div>
         </div>
@@ -357,6 +359,7 @@ const today = ()=>iso(new Date());
 const by=(k,dir=1)=>(a,b)=>a[k]===b[k]?0:(a[k]>b[k]?dir:-dir);
 const csvCell = s=>`"${String(s??"").replace(/"/g,'""')}"`;
 const deb=(fn,ms=160)=>{let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>fn(...a),ms);}};
+const invKey=v=>(v??"").toString().trim().toUpperCase();
 const XLSX_SRC = "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js";
 let xlsxLoader=null;
 function ensureXLSX(){
@@ -375,6 +378,7 @@ function ensureXLSX(){
 
 /* ===== State ===== */
 const LS_KEYS = {sales:"erp_sales",purch:"erp_purch",bank:"erp_bank",suppliers:"erp_suppliers"};
+const PURCH_COL_PREF_KEY = "erp_purch_hidden_cols";
 const THEME_KEY = "erp_theme";
 const State = {
   sales:[], purch:[], bank:[], suppliers:[],
@@ -385,6 +389,7 @@ const State = {
     purch:{q:"",from:"",to:"",st:""},
     bank:{q:"",from:"",to:"",type:""}
   },
+  hidden:{purch:new Set()},
   cfg:{reconDays:5}
 };
 
@@ -414,6 +419,7 @@ function saveLS(){
   localStorage.setItem(LS_KEYS.purch, JSON.stringify(State.purch));
   localStorage.setItem(LS_KEYS.bank, JSON.stringify(State.bank));
   localStorage.setItem(LS_KEYS.suppliers, JSON.stringify(State.suppliers));
+  savePurchHiddenColumns();
   $("#env").textContent="LocalStorage (saved)";
 }
 function loadLS(){
@@ -421,6 +427,7 @@ function loadLS(){
   State.purch = JSON.parse(localStorage.getItem(LS_KEYS.purch) || "[]");
   State.bank  = JSON.parse(localStorage.getItem(LS_KEYS.bank)  || "[]");
   State.suppliers = JSON.parse(localStorage.getItem(LS_KEYS.suppliers) || "[]");
+  loadPurchHiddenColumns();
   if(!(State.sales.length||State.purch.length||State.bank.length||State.suppliers.length)){
     State.sales = Seed.sales.slice(); State.purch = Seed.purch.slice(); State.bank = Seed.bank.slice();
     State.suppliers = Seed.suppliers.slice();
@@ -429,7 +436,7 @@ function loadLS(){
   syncPurchFromSuppliers();
   refreshAll();
 }
-function clearLS(){ localStorage.removeItem(LS_KEYS.sales);localStorage.removeItem(LS_KEYS.purch);localStorage.removeItem(LS_KEYS.bank);localStorage.removeItem(LS_KEYS.suppliers); $("#env").textContent="LocalStorage (cleared)";}
+function clearLS(){ localStorage.removeItem(LS_KEYS.sales);localStorage.removeItem(LS_KEYS.purch);localStorage.removeItem(LS_KEYS.bank);localStorage.removeItem(LS_KEYS.suppliers);localStorage.removeItem(PURCH_COL_PREF_KEY); State.hidden.purch.clear(); render.purch(); $("#env").textContent="LocalStorage (cleared)";}
 
 /* ===== Import/Export JSON ===== */
 function exportJSON(){
@@ -461,7 +468,7 @@ function stamp(){ $("#lastRef").textContent=new Date().toLocaleString(); $("#yr"
 function setActive(tab){ $$("#nav button").forEach(b=>b.classList.toggle("active",b.dataset.tab===tab)); $$("main > section").forEach(s=>s.classList.toggle("hidden", s.id!==tab)); }
 function refreshAll({forceReports=false}={}){
   renderAll();
-  autoRecon();
+  resetReconSuggestions();
   if(forceReports || !$("#reports").classList.contains("hidden")) runReport();
   stamp();
 }
@@ -652,23 +659,23 @@ function downloadSupplierTemplate(){
 /* ===== Filters ===== */
 const filtered = {
   sales:()=> State.sales.filter(r=>{
-    const f=State.filter.sales, q=f.q.toLowerCase();
+    const f=State.filter.sales, q=(f.q||"").toLowerCase();
     const inR=(!f.from||r.date>=f.from)&&(!f.to||r.date<=f.to);
     const st = !f.st||r.status===f.st;
     const qok = !q||[r.invoice_no,r.customer,r.notes].join(" ").toLowerCase().includes(q);
     return inR&&st&&qok;
   }).sort(by(State.sort.sales.k, State.sort.sales.d)),
   purch:()=> State.purch.filter(r=>{
-    const f=State.filter.purch,q=f.q.toLowerCase();
+    const f=State.filter.purch,q=(f.q||"").toLowerCase();
     const inR=(!f.from||r.date>=f.from)&&(!f.to||r.date<=f.to);
     const st=!f.st||r.status===f.st;
-    const haystack=[r.invoice_no,r.supplier,r.departamento,r.categoria,r.forma_pago,r.codigo_er,r.payment_auth,r.opex_capex,r.vat_number]
+    const haystack=PURCHASE_COLUMNS.map(col=>r[col.key]).concat([r.notes,r.pdf_link])
       .map(v=>v??"").join(" ");
     const qok=!q||haystack.toLowerCase().includes(q);
     return inR&&st&&qok;
   }).sort(by(State.sort.purch.k, State.sort.purch.d)),
   bank:()=> State.bank.filter(r=>{
-    const f=State.filter.bank,q=f.q.toLowerCase();
+    const f=State.filter.bank,q=(f.q||"").toLowerCase();
     const inR=(!f.from||r.date>=f.from)&&(!f.to||r.date<=f.to);
     const ty=!f.type||r.type===f.type;
     const qok=!q||[r.description,r.invoice_no,r.amount].join(" ").toLowerCase().includes(q);
@@ -737,6 +744,108 @@ const SUPPLIER_COLUMNS = [
   {header:"PMP",key:"pmp",type:"number"}
 ];
 
+const PURCHASE_COLUMNS = (()=>{
+  const base=[
+    {header:"Invoice #",key:"invoice_no",type:"text"},
+    {header:"Date",key:"date",type:"date"},
+    {header:"Supplier",key:"supplier",type:"text"},
+    {header:"Status",key:"status",type:"status"},
+    {header:"Paid Date",key:"paid_date",type:"date"},
+    {header:"Supplier Payment Status",key:"supplier_payment_status",type:"status"},
+    {header:"Supplier Paid Date",key:"supplier_paid_date",type:"date"},
+    {header:"Due Date",key:"due_date",type:"date"},
+    {header:"Payment Deadline",key:"payment_deadline",type:"date"},
+    {header:"Amount",key:"amount",type:"currency"},
+    {header:"Base Amount",key:"base_amount",type:"currency"},
+    {header:"Retention Amount",key:"retention_amount",type:"currency"},
+    {header:"Retention Rate",key:"retention_rate",type:"percent"},
+    {header:"Payment Authorization",key:"payment_auth",type:"text"},
+    {header:"PDF",key:"pdf_link",type:"link"}
+  ];
+  const seen=new Set(base.map(col=>col.key));
+  SUPPLIER_COLUMNS.forEach(col=>{
+    if(!seen.has(col.key)){
+      base.push({header:col.header,key:col.key,type:col.type});
+      seen.add(col.key);
+    }
+  });
+  return base;
+})();
+
+function visiblePurchaseColumns(){
+  return PURCHASE_COLUMNS.filter(col=>!State.hidden.purch.has(col.key));
+}
+
+function loadPurchHiddenColumns(){
+  try{
+    const stored=JSON.parse(localStorage.getItem(PURCH_COL_PREF_KEY)||"[]");
+    if(Array.isArray(stored)){
+      State.hidden.purch=new Set(stored.filter(key=>PURCHASE_COLUMNS.some(col=>col.key===key)));
+    }else{
+      State.hidden.purch=new Set();
+    }
+  }catch(err){
+    console.warn("Failed to load purchase column prefs", err);
+    State.hidden.purch=new Set();
+  }
+}
+
+function savePurchHiddenColumns(){
+  try{
+    localStorage.setItem(PURCH_COL_PREF_KEY, JSON.stringify([...State.hidden.purch]));
+  }catch(err){
+    console.warn("Failed to save purchase column prefs", err);
+  }
+}
+
+function renderPurchaseColumnMenu(){
+  const list=$("#pColList");
+  if(!list) return;
+  const visibleKeys=visiblePurchaseColumns().map(col=>col.key);
+  list.innerHTML=PURCHASE_COLUMNS.map(col=>{
+    const checked=!State.hidden.purch.has(col.key);
+    const disabled=checked && visibleKeys.length===1 && visibleKeys[0]===col.key;
+    return `<label><input type="checkbox" data-key="${col.key}"${checked?" checked":""}${disabled?" disabled":""}>${col.header}</label>`;
+  }).join("");
+}
+
+function formatPurchaseCell(col,row){
+  const val=row?.[col.key];
+  if(col.type==="link") return val?`<a href="${val}" target="_blank">Open</a>`:"—";
+  if(col.type==="status"){
+    if(!val) return "—";
+    const cls=val==="paid"?"ok":val==="unpaid"?"bad":"warn";
+    return `<span class="status ${cls}">${val}</span>`;
+  }
+  if(val==null||val==="") return "—";
+  if(col.type==="currency"){
+    const n=typeof val==="number"?val:num(val);
+    return Number.isFinite(n)?fmt.format(n):String(val);
+  }
+  if(col.type==="percent"){
+    const n=typeof val==="number"?val:num(val);
+    if(!Number.isFinite(n)) return String(val);
+    const pct=n>1?n:(n*100);
+    return `${pct.toFixed(2)}%`;
+  }
+  if(col.type==="number"){
+    const n=typeof val==="number"?val:num(val);
+    return Number.isFinite(n)?String(n):String(val);
+  }
+  return String(val);
+}
+
+function purchaseCSVValue(col,row){
+  const val=row?.[col.key];
+  if(val==null||val==="") return "";
+  if(col.type==="currency"||col.type==="number"||col.type==="percent"){
+    const n=typeof val==="number"?val:num(val);
+    return Number.isFinite(n)?n:val;
+  }
+  if(col.type==="link"||col.type==="status") return val;
+  return val;
+}
+
 function supplierStatusToPurchStatus(raw){
   const txt=String(raw||"").toLowerCase();
   if(!txt) return "unpaid";
@@ -745,17 +854,42 @@ function supplierStatusToPurchStatus(raw){
   return "unpaid";
 }
 
-function mapSupplierToPurchase(row){
+function mapSupplierToPurchase(row, prev){
   const amountTotal=num(row.importe_total);
   const baseAmount=num(row.base_imponible);
   const retentionAmount=num(row.importe_retencion);
+  const invoiceNo=row.numero_factura||row.dc||"";
+  const key=invKey(invoiceNo);
+  let bankDerivedStatus=null;
+  let bankDerivedDate="";
+  if(key){
+    for(const b of State.bank){
+      if(invKey(b.invoice_no)===key){
+        const ms=(b.match_status||"").toLowerCase();
+        if(ms==="matched"){ bankDerivedStatus="paid"; bankDerivedDate=b.date||bankDerivedDate; break; }
+        if(ms==="partial" && bankDerivedStatus!=="paid"){ bankDerivedStatus="partial"; bankDerivedDate=b.date||bankDerivedDate; }
+      }
+    }
+  }
+  let status = (prev && prev._source!=="supplier")?prev.status:undefined;
+  let paidDate = (prev && prev._source!=="supplier")?prev.paid_date:undefined;
+  if(bankDerivedStatus){
+    status = bankDerivedStatus;
+    if(!paidDate) paidDate = bankDerivedDate;
+  }
+  if(!status) status = "unpaid";
+  if(!paidDate) paidDate = "";
+  const supplierStatus=supplierStatusToPurchStatus(row.estado_pago);
+  const supplierPaidDate=row.fecha_pago||"";
   const purchase={
-    invoice_no:row.numero_factura||row.dc||"",
+    invoice_no:invoiceNo,
     date:row.fecha_factura||"",
     supplier:row.razon_social||row.sociedad||"",
     amount:Number.isFinite(amountTotal)?amountTotal:Number.isFinite(baseAmount)?baseAmount:0,
-    status:supplierStatusToPurchStatus(row.estado_pago),
-    paid_date:row.fecha_pago||"",
+    status,
+    supplier_payment_status:supplierStatus,
+    paid_date:paidDate,
+    supplier_paid_date:supplierPaidDate,
     due_date:row.fecha_vencimiento||row.fecha_tope_pago||"",
     payment_deadline:row.fecha_tope_pago||"",
     retention_amount:Number.isFinite(retentionAmount)?retentionAmount:0,
@@ -775,27 +909,29 @@ function mapSupplierToPurchase(row){
     supplier_details:row,
     _source:"supplier"
   };
+  for(const col of SUPPLIER_COLUMNS){
+    if(!(col.key in purchase)) purchase[col.key]=row[col.key]??"";
+  }
   if(!Number.isFinite(purchase.amount)) purchase.amount=0;
   return purchase;
 }
 
 function syncPurchFromSuppliers(){
-  const keyFromInv=v=>(v||"").toString().trim().toUpperCase();
   const existingByInv=new Map();
   State.purch.forEach(p=>{
-    const key=keyFromInv(p.invoice_no);
+    const key=invKey(p.invoice_no);
     if(key) existingByInv.set(key,p);
   });
-  const supNos=new Set(State.suppliers.map(r=>keyFromInv(r.numero_factura||r.dc)));
+  const supNos=new Set(State.suppliers.map(r=>invKey(r.numero_factura||r.dc)));
   const manual=State.purch.filter(p=>{
     if(p._source==="supplier") return false;
-    const inv=keyFromInv(p.invoice_no);
+    const inv=invKey(p.invoice_no);
     return !supNos.has(inv);
   });
   const imported=State.suppliers.map(row=>{
-    const purchase=mapSupplierToPurchase(row);
-    const key=keyFromInv(purchase.invoice_no);
+    const key=invKey(row.numero_factura||row.dc);
     const prev=key?existingByInv.get(key):null;
+    const purchase=mapSupplierToPurchase(row, prev);
     if(prev){
       ["pdf_link","notes","payment_auth"].forEach(field=>{
         if(prev[field] && !purchase[field]) purchase[field]=prev[field];
@@ -920,19 +1056,25 @@ const render = {
     selectRow(tb,"sales");
   },
   purch(){
+    let cols=visiblePurchaseColumns();
+    if(!cols.length){
+      State.hidden.purch.clear();
+      savePurchHiddenColumns();
+      cols=visiblePurchaseColumns();
+    }
+    renderPurchaseColumnMenu();
+    const head=$("#pHead");
+    if(head){
+      head.innerHTML=cols.map(col=>`<th data-k="${col.key}"${["currency","number","percent"].includes(col.type)?" class=\"mono\"":""}>${col.header}</th>`).join("");
+    }
     const rows=filtered.purch(); const tb=$("#pTbl tbody"); tb.innerHTML="";
-    rows.forEach((r,i)=>tb.insertAdjacentHTML("beforeend", `<tr data-i="${i}">
-      <td>${r.invoice_no||""}</td><td>${r.date||""}</td><td>${r.supplier||""}</td>
-      <td class="mono">${fmt.format(num(r.amount))}</td>
-      <td><span class="status ${r.status==="paid"?"ok":r.status==="unpaid"?"bad":"warn"}">${r.status||"—"}</span></td>
-      <td>${r.paid_date||"—"}</td>
-      <td>${r.due_date||r.payment_deadline||"—"}</td>
-      <td>${r.departamento||"—"}</td>
-      <td>${r.categoria||"—"}</td>
-      <td class="mono">${(r.retention_amount!==undefined&&r.retention_amount!==null&&r.retention_amount!=='')?fmt.format(num(r.retention_amount)):"—"}</td>
-      <td>${r.forma_pago||"—"}</td>
-      <td>${r.pdf_link?`<a href="${r.pdf_link}" target="_blank">Open</a>`:"—"}</td>
-    </tr>`));
+    rows.forEach((r,i)=>{
+      const cells=cols.map(col=>{
+        const cls=["currency","number","percent"].includes(col.type)?" class=\"mono\"":"";
+        return `<td${cls}>${formatPurchaseCell(col,r)}</td>`;
+      }).join("");
+      tb.insertAdjacentHTML("beforeend", `<tr data-i="${i}">${cells}</tr>`);
+    });
     selectRow(tb,"purch");
   },
   bank(){
@@ -976,11 +1118,22 @@ function renderAudit(){
 
 /* ===== Reconciliation ===== */
 function guessInvFromText(t){ const m=String(t).match(/(INV-\d+|BILL-\d+)/i); return m?m[1].toUpperCase():""; }
+function resetReconSuggestions(msg='Click "Auto-Reconcile" to generate suggestions.'){
+  const box=$("#bSug");
+  if(box) box.innerHTML=`<div class="note">${msg}</div>`;
+}
 function autoRecon(){
   const list=[];
   const w=State.cfg.reconDays;
+  const box=$("#bSug");
+  if(!box) return;
+  if(!State.bank.length){
+    resetReconSuggestions('No bank movements yet. Import or add transactions to see suggestions.');
+    return;
+  }
   // 1) confirm existing references
   for(const b of State.bank){
+    if((b.match_status||"").toLowerCase()==="matched") continue;
     if(b.invoice_no){
       const inv= State.sales.find(s=>s.invoice_no===b.invoice_no) || State.purch.find(p=>p.invoice_no===b.invoice_no);
       if(inv) list.push({bank:b,inv,score:200,label:`Confirm ${b.invoice_no} (${fmt.format(num(inv.amount))})`});
@@ -1002,8 +1155,11 @@ function autoRecon(){
     }
   }
   list.sort((a,b)=>b.score-a.score);
-  const box=$("#bSug"); box.innerHTML="";
-  if(!list.length){ box.innerHTML=`<div class="note">No suggestions.</div>`; return; }
+  box.innerHTML="";
+  if(!list.length){
+    resetReconSuggestions('No suggestions right now. Adjust dates or load more bank data.');
+    return;
+  }
   list.slice(0,50).forEach((s,i)=> box.insertAdjacentHTML("beforeend",
     `<div class="grp" style="justify-content:space-between">
       <div><b>${s.label}</b><div class="tiny mono">${s.bank.date} • ${fmt.format(num(s.bank.amount))} • ${s.bank.type}</div></div>
@@ -1076,12 +1232,27 @@ function toggleTheme(){
 }
 
 /* ===== Events ===== */
-$("#nav").addEventListener("click",e=>{ if(e.target.tagName!=="BUTTON")return; setActive(e.target.dataset.tab); if(e.target.dataset.tab==="bank") autoRecon(); });
-["sQ","sFrom","sTo"].forEach(id=>$("#"+id).addEventListener("input", deb(()=>{ State.filter.sales.q=$("#sQ").value.toLowerCase(); State.filter.sales.from=$("#sFrom").value; State.filter.sales.to=$("#sTo").value; render.sales(); })));
+$("#nav").addEventListener("click",e=>{ if(e.target.tagName!=="BUTTON")return; setActive(e.target.dataset.tab); });
+["sQ","sFrom","sTo"].forEach(id=>$("#"+id).addEventListener("input", deb(()=>{
+  State.filter.sales.q=$("#sQ").value.trim().toLowerCase();
+  State.filter.sales.from=$("#sFrom").value;
+  State.filter.sales.to=$("#sTo").value;
+  render.sales();
+})));
 $("#sSt").onchange=()=>{ State.filter.sales.st=$("#sSt").value; render.sales(); };
-["pQ","pFrom","pTo"].forEach(id=>$("#"+id).addEventListener("input", deb(()=>{ State.filter.purch.q=$("#pQ").value.toLowerCase(); State.filter.purch.from=$("#pFrom").value; State.filter.purch.to=$("#pTo").value; render.purch(); })));
+["pQ","pFrom","pTo"].forEach(id=>$("#"+id).addEventListener("input", deb(()=>{
+  State.filter.purch.q=$("#pQ").value.trim().toLowerCase();
+  State.filter.purch.from=$("#pFrom").value;
+  State.filter.purch.to=$("#pTo").value;
+  render.purch();
+})));
 $("#pSt").onchange=()=>{ State.filter.purch.st=$("#pSt").value; render.purch(); };
-["bQ","bFrom","bTo"].forEach(id=>$("#"+id).addEventListener("input", deb(()=>{ State.filter.bank.q=$("#bQ").value.toLowerCase(); State.filter.bank.from=$("#bFrom").value; State.filter.bank.to=$("#bTo").value; render.bank(); })));
+["bQ","bFrom","bTo"].forEach(id=>$("#"+id).addEventListener("input", deb(()=>{
+  State.filter.bank.q=$("#bQ").value.trim().toLowerCase();
+  State.filter.bank.from=$("#bFrom").value;
+  State.filter.bank.to=$("#bTo").value;
+  render.bank();
+})));
 $("#bType").onchange=()=>{ State.filter.bank.type=$("#bType").value; render.bank(); };
 
 // sorting
@@ -1100,30 +1271,53 @@ $("#sOpenPDF").onclick=()=>{ const r=State.sel.sales; if(r&&r.pdf_link) window.o
 $("#pAdd").onclick=()=>openModal("purch","add");
 $("#pEdit").onclick=()=> State.sel.purch? openModal("purch","edit", State.sel.purch) : alert("Select a row");
 $("#pDel").onclick=()=>{ const sel=State.sel.purch; if(!sel) return alert("Select a row"); if(confirm("Delete selected?")){ State.purch=State.purch.filter(x=>x!==sel); State.sel.purch=null; refreshAll(); $("#env").textContent="Edited (unsaved)"; }};
+const pColBtn=$("#pColBtn");
+const pColMenu=$("#pColMenu");
+if(pColBtn && pColMenu){
+  const closeMenu=()=>{
+    pColMenu.classList.remove("open");
+    pColMenu.setAttribute("aria-hidden","true");
+    pColBtn.setAttribute("aria-expanded","false");
+  };
+  const openMenu=()=>{
+    renderPurchaseColumnMenu();
+    pColMenu.classList.add("open");
+    pColMenu.setAttribute("aria-hidden","false");
+    pColBtn.setAttribute("aria-expanded","true");
+  };
+  pColBtn.addEventListener("click",e=>{
+    e.stopPropagation();
+    if(pColMenu.classList.contains("open")) closeMenu(); else openMenu();
+  });
+  document.addEventListener("click",e=>{
+    if(!pColMenu.contains(e.target) && e.target!==pColBtn && !pColBtn.contains(e.target)) closeMenu();
+  });
+  pColMenu.addEventListener("click",e=> e.stopPropagation());
+  pColMenu.addEventListener("change",e=>{
+    if(e.target.matches("input[type=checkbox]")){
+      const key=e.target.dataset.key;
+      if(!key) return;
+      const hide=!e.target.checked;
+      if(hide){
+        if(!State.hidden.purch.has(key)){
+          if(visiblePurchaseColumns().length<=1){
+            e.target.checked=true;
+            return;
+          }
+          State.hidden.purch.add(key);
+        }
+      }else{
+        State.hidden.purch.delete(key);
+      }
+      savePurchHiddenColumns();
+      render.purch();
+    }
+  });
+  const showAll=$("#pColShowAll");
+  if(showAll) showAll.onclick=()=>{ State.hidden.purch.clear(); savePurchHiddenColumns(); render.purch(); };
+}
 // purch export/open
-$("#pCSV").onclick=()=>{ const rows=filtered.purch(); const hdr=[
-  {label:"invoice_no",get:r=>r.invoice_no},
-  {label:"date",get:r=>r.date},
-  {label:"supplier",get:r=>r.supplier},
-  {label:"amount",get:r=>num(r.amount)},
-  {label:"base_amount",get:r=>num(r.base_amount)},
-  {label:"status",get:r=>r.status},
-  {label:"paid_date",get:r=>r.paid_date},
-  {label:"due_date",get:r=>r.due_date},
-  {label:"payment_deadline",get:r=>r.payment_deadline},
-  {label:"payment_auth",get:r=>r.payment_auth},
-  {label:"payment_method",get:r=>r.forma_pago},
-  {label:"departamento",get:r=>r.departamento},
-  {label:"categoria",get:r=>r.categoria},
-  {label:"opex_capex",get:r=>r.opex_capex},
-  {label:"codigo_er",get:r=>r.codigo_er},
-  {label:"vat_number",get:r=>r.vat_number},
-  {label:"periodo_contable",get:r=>r.periodo_contable},
-  {label:"retention_amount",get:r=>num(r.retention_amount)},
-  {label:"retention_rate",get:r=>r.retention_rate},
-  {label:"dias_margen",get:r=>r.dias_margen},
-  {label:"pdf_link",get:r=>r.pdf_link}
-]; csvDownload(`purchases_${today()}.csv`,hdr,rows); };
+$("#pCSV").onclick=()=>{ const rows=filtered.purch(); const hdr=PURCHASE_COLUMNS.map(col=>({label:col.key,get:r=>purchaseCSVValue(col,r)})); csvDownload(`purchases_${today()}.csv`,hdr,rows); };
 $("#pPDF").onclick=()=> printTableAsPDF("Purchases", $("#pTbl"));
 $("#pOpenPDF").onclick=()=>{ const r=State.sel.purch; if(r&&r.pdf_link) window.open(r.pdf_link,"_blank"); else alert("Select a row with PDF link"); };
 
@@ -1168,10 +1362,11 @@ function init(){
   loadTheme();
   // Default from LocalStorage or seed
   loadLS();
-  // Prefill date filters to month
-  const d=new Date(); const f=new Date(d.getFullYear(), d.getMonth(), 1);
-  $("#sFrom").value=$("#pFrom").value=$("#bFrom").value=$("#rFrom").value=iso(f);
-  $("#sTo").value=$("#pTo").value=$("#bTo").value=$("#rTo").value=today();
+  // Ensure filters start clear so all records are visible
+  ["sFrom","sTo","pFrom","pTo","bFrom","bTo","rFrom","rTo"].forEach(id=>{
+    const el=$("#"+id);
+    if(el) el.value="";
+  });
   clickSort("sTbl","sales"); clickSort("pTbl","purch"); clickSort("bTbl","bank");
 }
 init();
